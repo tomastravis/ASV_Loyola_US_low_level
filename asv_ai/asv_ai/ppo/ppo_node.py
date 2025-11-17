@@ -513,36 +513,8 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
             self.current_episode_reward = 0.0
 
             if self.training_enabled:
-                # Set done flag for current step
-                self.dones = np.ones(1, dtype=bool)
-
-                # Add final transition with terminal state (current_obs is the terminal state)
-                if self.current_obs is not None:
-                    with th.no_grad():
-                        obs_tensor = DataConverter.numpy_to_tensor(self.current_obs)
-                        obs_tensor = obs_tensor.reshape(1, -1)
-                        _, values, _ = self.model.policy.forward(obs_tensor)
-
-                        # Add final transition to buffer
-                        self.training_buffer.add(
-                            obs=self.current_obs.reshape(1, -1),
-                            actions=self.last_action.reshape(1, -1) if self.last_action is not None
-                                else np.zeros((1, self.action_space.shape[0])),
-                            rewards=np.array([self.last_reward or 0.0]),
-                            episode_starts=self.episode_start,  # Use episode_start, not dones
-                            values=values,
-                            log_probs=self.last_log_probs if self.last_log_probs is not None
-                                else th.zeros(self.action_space.shape[0], device=self.model.device)
-                        )
-                        
-                        # Store terminal value for GAE computation
-                        self._terminal_value = values
-
                 # Set episode_start flag for the NEXT step
                 self.episode_start = np.ones(1, dtype=bool)
-
-                # Reset done flag for next step
-                self.dones = np.zeros(1, dtype=bool)
 
             # Finalize episode for rollout collection
             self._finalize_episode()
@@ -602,13 +574,8 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         self.get_logger().info(f"Training PPO model on {buffer_size} transitions (progressive training)")
 
         try:
-            # Compute returns and advantages using proper terminal state value
-            # Use the terminal state value computed in done_callback, or zero if episode truly ended
-            if hasattr(self, '_terminal_value') and self._terminal_value is not None:
-                last_values = self._terminal_value
-                self._terminal_value = None  # Reset after use
-            else:
-                last_values = th.zeros(1, device=self.model.device)
+            # Compute returns and advantages
+            last_values = th.zeros(1, device=self.model.device)
             self.training_buffer.compute_returns_and_advantage(last_values=last_values, dones=self.dones)
 
             # Set training mode
