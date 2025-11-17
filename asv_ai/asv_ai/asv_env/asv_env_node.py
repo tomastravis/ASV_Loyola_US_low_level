@@ -339,24 +339,68 @@ class ASVEnvNode(Node):
         position_errors = expected_positions - agent_positions
         angles_to_target = np.arctan2(position_errors[:, 1], position_errors[:, 0]) - agent_orientations
 
-        # Velocity rewards (vectorized)
-        k_v = 2.75
-        rv_components = k_v * (agent_velocities[:, 0] * np.cos(angles_to_target) -
-                              (np.abs(agent_velocities[:, 1]) + np.abs(agent_velocities[:, 2])) *
-                              np.abs(np.sin(angles_to_target)))
+        # === OLD REWARD (commented out - was rewarding formation following) ===
+        # # Velocity rewards (vectorized)
+        # k_v = 2.75
+        # rv_components = k_v * (agent_velocities[:, 0] * np.cos(angles_to_target) -
+        #                       (np.abs(agent_velocities[:, 1]) + np.abs(agent_velocities[:, 2])) *
+        #                       np.abs(np.sin(angles_to_target)))
+        #
+        # # Distance rewards (vectorized)
+        # k_d = 2.0
+        # err_max = 10.0
+        # errors = np.linalg.norm(position_errors, axis=1)
+        # rd_components = k_d * (-errors / err_max)
+        #
+        # # Average rewards
+        # total_rv = np.mean(rv_components)
+        # total_rd = np.mean(rd_components)
+        #
+        # # Final reward
+        # reward = total_rv + total_rd
 
-        # Distance rewards (vectorized)
-        k_d = 2.0
-        err_max = 10.0
-        errors = np.linalg.norm(position_errors, axis=1)
-        rd_components = k_d * (-errors / err_max)
-
-        # Average rewards
-        total_rv = np.mean(rv_components)
-        total_rd = np.mean(rd_components)
-
-        # Final reward
-        reward = total_rv + total_rd
+        # === NEW REWARD: Encourage staying still ===
+        
+        # 1. Stillness reward - reward low velocities (highest reward when completely still)
+        k_stillness = 5.0
+        # Calculate total velocity magnitude for each agent (vx^2 + vy^2 + vyaw^2)
+        velocity_magnitudes = np.sqrt(
+            agent_velocities[:, 0]**2 + 
+            agent_velocities[:, 1]**2 + 
+            agent_velocities[:, 2]**2
+        )
+        # Exponential reward: max reward at v=0, decays as velocity increases
+        stillness_components = k_stillness * np.exp(-velocity_magnitudes)
+        
+        # 2. Velocity penalty - directly penalize any movement
+        k_velocity_penalty = 3.0
+        # Linear penalty proportional to velocity magnitude
+        velocity_penalty_components = -k_velocity_penalty * velocity_magnitudes
+        
+        # 3. Position stability - track and reward staying near recent position
+        if not hasattr(self, '_reference_positions'):
+            # Initialize reference positions on first call
+            self._reference_positions = agent_positions.copy()
+            self._reference_update_time = current_time
+        
+        # Update reference positions slowly (every 2 seconds) to adapt to drift
+        if current_time - self._reference_update_time > 2.0:
+            # Slowly move reference toward current position (90% old, 10% new)
+            self._reference_positions = 0.9 * self._reference_positions + 0.1 * agent_positions
+            self._reference_update_time = current_time
+        
+        # Penalize drift from reference position
+        k_drift = 2.0
+        drift_distances = np.linalg.norm(agent_positions - self._reference_positions, axis=1)
+        drift_penalty_components = -k_drift * drift_distances
+        
+        # Average all components across agents
+        avg_stillness = np.mean(stillness_components)
+        avg_velocity_penalty = np.mean(velocity_penalty_components)
+        avg_drift_penalty = np.mean(drift_penalty_components)
+        
+        # Final reward: encourage stillness, penalize movement and drift
+        reward = avg_stillness + avg_velocity_penalty + avg_drift_penalty
 
         # Cache the reward
         self._cached_reward = reward
