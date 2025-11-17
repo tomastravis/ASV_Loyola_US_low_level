@@ -526,12 +526,9 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
 
             # Limit number of episodes if needed
             if self.episode_id >= self.max_episodes:
-                self.get_logger().info(f"Reached maximum episodes ({self.max_episodes}). Saving final model.")
-                # Save final model with special naming
-                final_model_path = os.path.join(self.rollout_dir, "ppo_model_final.zip")
-                self.model.save(final_model_path)
-                self._save_model("final training completion")
-                # Could add code to shut down gracefully here
+                self.get_logger().info(f"Reached maximum episodes ({self.max_episodes}). Shutting down...")
+                self._save_model("max episodes reached")
+                rclpy.shutdown()
 
     def _initialize_rollout_file(self):
         """Create the rollout file with metadata section."""
@@ -665,9 +662,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
                 f"Total transitions: {self.training_stats['total_transitions_trained']}, "
                 f"Avg buffer size: {self.training_stats['average_buffer_size_at_training']:.1f}"
             )
-
-            # Smart model saving - only save when needed
-            self._save_model_if_needed()
 
             # Smart buffer management: reset strategically
             current_buffer_size = len(self.training_buffer.observations)
@@ -864,43 +858,19 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         # No model could be loaded
         return None
 
-    def _save_model_if_needed(self):
-        """Smart model saving based on configured criteria."""
-        should_save = False
-        save_reason = ""
-        
-        # Check if enough episodes have passed since last save
-        if (self.auto_save_enabled and 
-            self.episode_id - self.last_save_episode >= self.save_frequency):
-            should_save = True
-            save_reason = f"periodic save (every {self.save_frequency} episodes)"
-        
-        # Check if this is a performance improvement
-        if (self.save_on_improvement and 
-            len(self.episode_rewards) > 0 and
-            self.episode_rewards[-1] > self.best_episode_reward):
-            should_save = True
-            self.best_episode_reward = self.episode_rewards[-1]
-            save_reason = f"performance improvement (reward: {self.best_episode_reward:.4f})"
-        
-        if should_save:
-            self._save_model(save_reason)
-            self.last_save_episode = self.episode_id
-
     def _save_model(self, reason: str = "manual"):
         """Save the current model with proper logging."""
         try:
-            # Always save as latest_model.zip for easy discovery
+            # Save as latest_model.zip
             latest_model_path = os.path.join(self.rollout_dir, "latest_model.zip")
             self.model.save(latest_model_path)
             
-            # Save timestamped version for major milestones
-            if "improvement" in reason or "final" in reason or "interrupt" in reason:
-                timestamp_model_path = os.path.join(self.rollout_dir, f"ppo_model_ep{self.episode_id}.zip")
-                self.model.save(timestamp_model_path)
-                self.get_logger().info(f"Saved model checkpoint: {timestamp_model_path}")
+            # Save timestamped version
+            timestamp_model_path = os.path.join(self.rollout_dir, f"ppo_model_ep{self.episode_id}.zip")
+            self.model.save(timestamp_model_path)
             
             self.get_logger().info(f"Model saved ({reason}): {latest_model_path}")
+            self.get_logger().info(f"Checkpoint saved: {timestamp_model_path}")
             
         except Exception as e:
             self.get_logger().error(f"Failed to save model: {e}")
