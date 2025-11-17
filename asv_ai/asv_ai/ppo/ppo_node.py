@@ -182,10 +182,10 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
             self.dones = np.zeros(1, dtype=bool)  # Episode termination flags
             self.episode_start = np.zeros(1, dtype=bool)  # Episode start flags
 
-            # Create optimized training timer (every 10 seconds instead of 30)
-            self.training_timer = self.create_timer(10.0, self.train_model)
+            # Create timers (SLOWED DOWN for easier debugging/visualization)
+            self.training_timer = self.create_timer(30.0, self.train_model)  # 30 seconds (was 10s)
 
-            self.reset_timer = self.create_timer(20.0, self.check_and_reset)  # Reduced frequency
+            self.reset_timer = self.create_timer(30.0, self.check_and_reset)  # 30 seconds (was 20s)
 
             self.get_logger().info("PPO training mode enabled")
 

@@ -95,8 +95,8 @@ class ASVEnvNode(Node):
         # Initial state timer
         self.initial_timer = self.create_timer(1.0, self.initial_state_publish_callback)
 
-        # Keepalive timer (reduced frequency to avoid redundant publications)
-        self.keepalive_timer = self.create_timer(1.0, self._keepalive_publish)  # Reduced from 0.5s to 1.0s
+        # Keepalive timer (SLOWED DOWN for easier debugging/visualization)
+        self.keepalive_timer = self.create_timer(5.0, self._keepalive_publish)  # 2 seconds (was 1.0s)
 
         self.get_logger().info(f'ASV Environment Node started with {self.num_agents} agents')
 
