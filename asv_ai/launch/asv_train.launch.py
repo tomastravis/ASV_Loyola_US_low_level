@@ -30,7 +30,7 @@ def generate_launch_description():
         description='PPO training epochs'
     )
     rollout_dir_arg = DeclareLaunchArgument(
-        'rollout_dir', default_value='~/Desktop/ASV_Rollouts',
+        'rollout_dir', default_value='~/Desktop/PPO_Rollouts',
         description='Directory to save rollouts and models'
     )
     enable_viz_arg = DeclareLaunchArgument(
