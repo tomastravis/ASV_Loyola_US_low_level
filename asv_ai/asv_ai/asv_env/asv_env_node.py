@@ -279,7 +279,7 @@ class ASVEnvNode(Node):
                 x_pos,   # x - clipped to bounds
                 y_pos,   # y - clipped to bounds
                 np.random.uniform(-np.pi, np.pi),  # yaw
-                np.random.uniform(0, 1),       # vx
+                0.0,                           # vx - START AT ZERO for stillness training
                 0.0,                           # vy
                 0.0                            # vyaw
             ])
