@@ -82,7 +82,7 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         self.declare_parameter('batch_size', 64)  # PPO batch size
         self.declare_parameter('gamma', 0.99)  # Discount factor
         self.declare_parameter('gae_lambda', 0.95)  # GAE lambda
-        self.declare_parameter('max_episodes', 1000)
+        self.declare_parameter('max_episodes', 100000)
         
         # Model saving parameters
         self.declare_parameter('save_frequency', 500)  # Save every N episodes
