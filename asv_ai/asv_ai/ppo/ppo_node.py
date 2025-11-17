@@ -199,14 +199,12 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
             time.localtime(self.formatted_timestamp.sec)
         )
 
-        # Single file for the entire session
-        self.rollout_filename = os.path.join(
-            self.rollout_dir,
-            f"formation_{self.session_id}.json"
-        )
+        # Create session folder for this training run
+        self.session_dir = os.path.join(self.rollout_dir, f"session_{self.session_id}")
+        os.makedirs(self.session_dir, exist_ok=True)
 
-        # Initialize the file with metadata
-        self._initialize_rollout_file()
+        # Initialize metadata file for the session
+        self._initialize_session_metadata()
         
         # Setup signal handling for graceful shutdown and model saving
         import signal
@@ -345,10 +343,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         self.rollout_data.append(transition)
         self.step_idx += 1
 
-        # Optional periodic save
-        if self.rollout_save_every and (self.step_idx % self.rollout_save_every == 0):
-            self._save_rollout(final=False)
-
     def _format_state_for_logging(self, state_array):
         """Convert flat state array to structured dictionary."""
         try:
@@ -436,39 +430,31 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
             return action_array.tolist()
 
     def _save_rollout(self, final: bool):
-        """Update the rollout file with current episode data."""
+        """Save current episode data to a separate file."""
         if not self.rollout_data:
             return
 
         try:
-            # Load existing file content
-            with open(self.rollout_filename) as f:
-                data = json.load(f)
+            # Create episode filename
+            episode_filename = os.path.join(self.session_dir, f"episode_{self.episode_id}.json")
+            
+            # Create episode data structure
+            episode_data = {
+                "episode_id": self.episode_id,
+                "start_time": time.time(),
+                "start_time_formatted": time.strftime("%H:%M:%S"),
+                "is_complete": final,
+                "num_transitions": len(self.rollout_data),
+                "transitions": self.rollout_data
+            }
 
-            # Find or create episode entry
-            if len(data["episodes"]) <= self.episode_id:
-                # Add new episode
-                episode_data = {
-                    "episode_id": self.episode_id,
-                    "start_time": time.time(),
-                    "start_time_formatted": time.strftime("%H:%M:%S"),
-                    "is_complete": final,
-                    "transitions": self.rollout_data
-                }
-                data["episodes"].append(episode_data)
-            else:
-                # Update existing episode
-                data["episodes"][self.episode_id]["transitions"] = self.rollout_data
-                data["episodes"][self.episode_id]["is_complete"] = final
+            # Write to file (single write operation)
+            with open(episode_filename, 'w') as f:
+                json.dump(episode_data, f, indent=2)
 
-            # Write back to file
-            with open(self.rollout_filename, 'w') as f:
-                json.dump(data, f, indent=2)
-
-            status = "complete" if final else f"in progress ({len(self.rollout_data)} steps)"
-            self.get_logger().info(f"Updated rollout file with episode {self.episode_id} - {status}")
+            self.get_logger().info(f"Saved episode {self.episode_id} to {episode_filename} ({len(self.rollout_data)} transitions)")
         except Exception as e:
-            self.get_logger().error(f"Failed to update rollout file: {e}")
+            self.get_logger().error(f"Failed to save episode {self.episode_id}: {e}")
 
     def _finalize_episode(self):
         """Save and reset buffers for the next episode."""
@@ -483,22 +469,19 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         self.get_logger().info(f"Starting episode {self.episode_id}")
 
     def collect_rollouts(self, rollout_dir: str | None = None, save_every_steps: int | None = None):
-        """Configure where and how often to save rollouts collected from ROS topics.
-
-        This adapts SB3's `collect_rollouts` to our ROS-driven, callback-based flow.
-        It does not block; callbacks fill the buffer and saves occur periodically and on episode end.
+        """Configure where to save rollouts collected from ROS topics.
 
         Args:
-            rollout_dir: Directory to write JSON files; defaults to the `rollout_dir` parameter.
-            save_every_steps: Save partial files every N steps; 0/None disables periodic saves.
+            rollout_dir: Directory to write session folders; defaults to the `rollout_dir` parameter.
+            save_every_steps: Deprecated - episodes are now saved individually at completion.
         """
         if rollout_dir is not None:
             self.rollout_dir = os.path.expanduser(rollout_dir)
             os.makedirs(self.rollout_dir, exist_ok=True)
         if save_every_steps is not None:
-            self.rollout_save_every = int(save_every_steps)
+            self.get_logger().warn("save_every_steps is deprecated - episodes are saved individually")
         self.get_logger().info(
-            f"Rollout collection configured: dir={self.rollout_dir}, save_every={self.rollout_save_every}"
+            f"Rollout collection configured: dir={self.rollout_dir}, session={self.session_id}"
         )
 
     def reward_callback(self, msg):
@@ -530,8 +513,9 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
                 self._save_model("max episodes reached")
                 rclpy.shutdown()
 
-    def _initialize_rollout_file(self):
-        """Create the rollout file with metadata section."""
+    def _initialize_session_metadata(self):
+        """Create metadata file for the training session."""
+        metadata_filename = os.path.join(self.session_dir, "metadata.json")
         metadata = {
             "session_id": self.session_id,
             "start_time": self.session_start_time.to_msg().sec,
@@ -541,15 +525,16 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
             ),
             "num_agents": self.num_agents,
             "model_path": self.model_path if self.model_path else "new_model",
-            "episodes": []
+            "training_enabled": self.training_enabled,
+            "max_episodes": self.max_episodes
         }
 
         try:
-            with open(self.rollout_filename, 'w') as f:
+            with open(metadata_filename, 'w') as f:
                 json.dump(metadata, f, indent=2)
-            self.get_logger().info(f"Initialized rollout file: {self.rollout_filename}")
+            self.get_logger().info(f"Initialized session metadata: {metadata_filename}")
         except Exception as e:
-            self.get_logger().error(f"Failed to initialize rollout file: {e}")
+            self.get_logger().error(f"Failed to initialize session metadata: {e}")
 
     def train_model(self):
         """Train the PPO model on collected transitions with progressive approach."""
