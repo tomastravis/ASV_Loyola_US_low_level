@@ -53,12 +53,14 @@ class CustomActorCritic(nn.Module):
                 nn.init.orthogonal_(module.weight, gain=np.sqrt(2))
                 nn.init.constant_(module.bias, 0.0)
         
-        # Special initialization for policy output layer (smaller weights)
-        nn.init.orthogonal_(self.actor_mean.weight, gain=0.01)
-        nn.init.constant_(self.actor_mean.bias, 0.0)
+        # Policy output layer: use larger gain for more diverse initial actions
+        nn.init.orthogonal_(self.actor_mean.weight, gain=0.5)  # Increased from 0.01
+        # Random bias to break symmetry between runs
+        nn.init.uniform_(self.actor_mean.bias, -0.1, 0.1)  # Random instead of 0
         
-        # Initialize log_std to reasonable values
-        nn.init.constant_(self.actor_log_std, -0.5)  # std ≈ 0.6
+        # Initialize log_std for SMALL actions initially (std = 0.3)
+        # This makes the model start with small, conservative actions
+        nn.init.constant_(self.actor_log_std, -1.2)  # std = exp(-1.2) ≈ 0.3
     
     def forward(self, obs):
         """

@@ -62,6 +62,9 @@ class ASVEnvNode(Node):
         self._cached_expected_positions = None
         self._cache_timestamp = 0.0
 
+        # Store last action for reward calculation
+        self._last_actions = None
+
         # Initialize empty publisher lists first
         self.agent_action_pubs = []
         self.agent_reset_pubs = []
@@ -157,6 +160,9 @@ class ASVEnvNode(Node):
         if actions.size != 2 * self.num_agents:
             self.get_logger().error(f'Action message has wrong size: {actions.size}, expected {2 * self.num_agents}')
             return
+
+        # Store actions for reward calculation
+        self._last_actions = actions.copy()
 
         self.loop_started = True
 
@@ -359,23 +365,23 @@ class ASVEnvNode(Node):
         # # Final reward
         # reward = total_rv + total_rd
 
-        # === NEW REWARD: Encourage staying still ===
+        # === NEW REWARD: AGGRESSIVE stillness - HEAVILY penalize ANY movement ===
         
-        # 1. Stillness reward - reward low velocities (highest reward when completely still)
-        k_stillness = 5.0
+        # 1. Stillness reward - MASSIVE reward for being completely still
+        k_stillness = 10.0  # Doubled from 5.0
         # Calculate total velocity magnitude for each agent (vx^2 + vy^2 + vyaw^2)
         velocity_magnitudes = np.sqrt(
             agent_velocities[:, 0]**2 + 
             agent_velocities[:, 1]**2 + 
             agent_velocities[:, 2]**2
         )
-        # Exponential reward: max reward at v=0, decays as velocity increases
-        stillness_components = k_stillness * np.exp(-velocity_magnitudes)
+        # Sharper exponential: decays MUCH faster with velocity
+        stillness_components = k_stillness * np.exp(-3.0 * velocity_magnitudes)  # 3x faster decay
         
-        # 2. Velocity penalty - directly penalize any movement
-        k_velocity_penalty = 3.0
-        # Linear penalty proportional to velocity magnitude
-        velocity_penalty_components = -k_velocity_penalty * velocity_magnitudes
+        # 2. Velocity penalty - HEAVILY penalize any movement
+        k_velocity_penalty = 15.0  # 5x increase from 3.0
+        # Quadratic penalty: small movements = small penalty, large movements = HUGE penalty
+        velocity_penalty_components = -k_velocity_penalty * (velocity_magnitudes ** 2)
         
         # 3. Position stability - track and reward staying near recent position
         if not hasattr(self, '_reference_positions'):
@@ -389,18 +395,52 @@ class ASVEnvNode(Node):
             self._reference_positions = 0.9 * self._reference_positions + 0.1 * agent_positions
             self._reference_update_time = current_time
         
-        # Penalize drift from reference position
-        k_drift = 2.0
+        # Penalize drift from reference position - INCREASED
+        k_drift = 8.0  # 4x increase from 2.0
         drift_distances = np.linalg.norm(agent_positions - self._reference_positions, axis=1)
         drift_penalty_components = -k_drift * drift_distances
+        
+        # 4. Action penalty - MASSIVE penalty for large actions
+        k_action = 10.0  # 10x increase from 1.0
+        if self._last_actions is not None:
+            # Quadratic penalty: small actions = tiny penalty, large actions = HUGE penalty
+            action_magnitudes = np.abs(self._last_actions)
+            action_penalty = -k_action * np.mean(action_magnitudes ** 2)
+        else:
+            action_penalty = 0.0
+        
+        # 5. NEW: Bonus for near-zero actions (encourage "do nothing")
+        k_zero_action_bonus = 5.0
+        if self._last_actions is not None:
+            # Bonus when actions are very close to zero
+            max_action = np.max(np.abs(self._last_actions))
+            if max_action < 0.1:  # Actions essentially zero
+                zero_action_bonus = k_zero_action_bonus
+            elif max_action < 0.3:  # Actions very small
+                zero_action_bonus = k_zero_action_bonus * 0.5
+            else:
+                zero_action_bonus = 0.0
+        else:
+            zero_action_bonus = 0.0
         
         # Average all components across agents
         avg_stillness = np.mean(stillness_components)
         avg_velocity_penalty = np.mean(velocity_penalty_components)
         avg_drift_penalty = np.mean(drift_penalty_components)
         
-        # Final reward: encourage stillness, penalize movement and drift
-        reward = avg_stillness + avg_velocity_penalty + avg_drift_penalty
+        # Final reward: HEAVILY encourage stillness and tiny actions
+        reward = avg_stillness + avg_velocity_penalty + avg_drift_penalty + action_penalty + zero_action_bonus
+        
+        # Log reward components occasionally for debugging
+        if not hasattr(self, '_reward_log_counter'):
+            self._reward_log_counter = 0
+        self._reward_log_counter += 1
+        if self._reward_log_counter % 100 == 0:
+            self.get_logger().info(
+                f'Reward breakdown: still={avg_stillness:.2f}, vel_pen={avg_velocity_penalty:.2f}, '
+                f'drift={avg_drift_penalty:.2f}, act_pen={action_penalty:.2f}, zero_bonus={zero_action_bonus:.2f} '
+                f'-> total={reward:.2f}'
+            )
 
         # Cache the reward
         self._cached_reward = reward
