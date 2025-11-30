@@ -108,11 +108,12 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         self.last_save_episode = 0
 
         # Publishers and Subscribers FIRST to avoid missing early messages
-        self.state_sub = self.create_subscription(Float32MultiArray, '/environment/state', self.state_callback, 10)
-        self.reward_sub = self.create_subscription(Float32, '/environment/reward', self.reward_callback, 10)
-        self.done_sub = self.create_subscription(Bool, '/environment/done', self.done_callback, 10)
+        # Use QoS depth=1 to only process the most recent message and avoid lag
+        self.state_sub = self.create_subscription(Float32MultiArray, '/environment/state', self.state_callback, 1)
+        self.reward_sub = self.create_subscription(Float32, '/environment/reward', self.reward_callback, 1)
+        self.done_sub = self.create_subscription(Bool, '/environment/done', self.done_callback, 1)
 
-        self.action_pub = self.create_publisher(Float32MultiArray, '/ppo/action', 10)
+        self.action_pub = self.create_publisher(Float32MultiArray, '/ppo/action', 1)
 
         self.reset_client = self.create_client(Trigger, '/environment/reset')
 
@@ -273,7 +274,7 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
             # We create transition (s_t-1, a_t-1, r_t, s_t) using prev_obs from last step
             if self.training_enabled and self.prev_obs is not None and self.last_action is not None:
                 try:
-                    buffer_size = len(self.training_buffer.observations)
+                    buffer_size = len(self.training_buffer)  # Use __len__ which returns self.pos
 
                     # Check if we need to reset buffer due to memory limit
                     if buffer_size >= self.memory_limit:
@@ -294,6 +295,9 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
                                 values=self.last_values,
                                 log_probs=self.last_log_probs
                             )
+                            # Log every 10 transitions
+                            if (buffer_size + 1) % 10 == 0:
+                                self.get_logger().info(f"Buffer now has {buffer_size + 1} transitions", throttle_duration_sec=5.0)
                 except Exception as e:
                     self.get_logger().error(f"Error adding to training buffer: {e}")
 
@@ -542,7 +546,7 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
             return
 
         # Check how many valid transitions we have
-        buffer_size = len(self.training_buffer.observations)
+        buffer_size = len(self.training_buffer)  # Use __len__ which returns self.pos
 
         # Log buffer status with memory information
         memory_usage_kb = (buffer_size * 76) / 1024  # Approximate memory usage
@@ -576,9 +580,20 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
 
             for epoch in range(self.n_epochs):
                 approx_kl_divs = []
+                minibatch_count = 0
 
                 # Process minibatches
                 for rollout_data in self.training_buffer.get(self.batch_size):
+                    minibatch_count += 1
+                    self.get_logger().info(
+                        f"################################################## Minibatch {minibatch_count}"
+                    )
+                    self.get_logger().info(
+                        f"Actions shape: {rollout_data.actions.shape}, first: {rollout_data.actions[0]}"
+                    )
+                    self.get_logger().info(
+                        f"Observations shape: {rollout_data.observations.shape}, first: {rollout_data.observations[0]}"
+                    )
                     actions = rollout_data.actions
 
                     # Evaluate actions
@@ -623,6 +638,12 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
                         approx_kl_div = th.mean((th.exp(log_ratio) - 1) - log_ratio).cpu().numpy()
                         approx_kl_divs.append(approx_kl_div)
 
+                # Log minibatch count
+                if minibatch_count == 0:
+                    self.get_logger().warn(f"WARNING: Epoch {epoch+1} - NO MINIBATCHES GENERATED! Buffer may be empty or misconfigured.")
+                else:
+                    self.get_logger().info(f"Epoch {epoch+1} processed {minibatch_count} minibatches")
+
                 mean_kl = np.mean(approx_kl_divs)
                 self.get_logger().info(
                     f"Epoch {epoch+1}/{self.n_epochs}, approx_kl={mean_kl:.6f}, lr={current_lr:.6f}"
@@ -648,8 +669,8 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
                 f"Avg buffer size: {self.training_stats['average_buffer_size_at_training']:.1f}"
             )
 
-            # Smart buffer management: reset strategically
-            current_buffer_size = len(self.training_buffer.observations)
+            # Smart buffer management: reset strategically - FIX: use len()
+            current_buffer_size = len(self.training_buffer)
             if current_buffer_size >= self.memory_limit * 0.8:  # Reset when 80% of memory limit
                 self.training_stats['memory_resets'] += 1
                 self.get_logger().info(f"Resetting buffer for memory management ({current_buffer_size}/{self.memory_limit}) - Reset #{self.training_stats['memory_resets']}")
@@ -880,7 +901,7 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         if not self.training_enabled:
             return "Training disabled"
 
-        buffer_size = len(self.training_buffer.observations) if hasattr(self, 'training_buffer') else 0
+        buffer_size = len(self.training_buffer) if hasattr(self, 'training_buffer') else 0
         memory_usage_kb = (buffer_size * 76) / 1024
 
         insights = {

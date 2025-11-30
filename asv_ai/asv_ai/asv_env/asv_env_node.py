@@ -66,20 +66,20 @@ class ASVEnvNode(Node):
         self.agent_action_pubs = []
         self.agent_reset_pubs = []
 
-        # Publishers
-        self.state_pub = self.create_publisher(Float32MultiArray, '/environment/state', 10)
-        self.reward_pub = self.create_publisher(Float32, '/environment/reward', 10)
-        self.done_pub = self.create_publisher(Bool, '/environment/done', 10)
+        # Publishers - Use QoS depth=1 to avoid message accumulation
+        self.state_pub = self.create_publisher(Float32MultiArray, '/environment/state', 1)
+        self.reward_pub = self.create_publisher(Float32, '/environment/reward', 1)
+        self.done_pub = self.create_publisher(Bool, '/environment/done', 1)
         self.reset_service = self.create_service(Trigger, '/environment/reset', self.reset_callback)
 
         # Create a callback for each agent
         for i in range(self.num_agents):
-            self.agent_action_pubs.append(self.create_publisher(Float32MultiArray, f'/agent_{i}/action', 10))
-            self.agent_reset_pubs.append(self.create_publisher(Float32MultiArray, f'/agent_{i}/reset', 10))
+            self.agent_action_pubs.append(self.create_publisher(Float32MultiArray, f'/agent_{i}/action', 1))
+            self.agent_reset_pubs.append(self.create_publisher(Float32MultiArray, f'/agent_{i}/reset', 1))
 
-        # Subscribers
+        # Subscribers - Use QoS depth=1 to only process most recent message
         self.action_sub = self.create_subscription(
-            Float32MultiArray, '/ppo/action', self.action_callback, 10
+            Float32MultiArray, '/ppo/action', self.action_callback, 1
         )
         self.agent_state_subs = []
         for i in range(self.num_agents):
@@ -88,7 +88,7 @@ class ASVEnvNode(Node):
                     Float32MultiArray,
                     f'/agent_{i}/state_update',
                     self.create_state_callback(i),
-                    10
+                    1
                 )
             )
 

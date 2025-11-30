@@ -36,14 +36,14 @@ class ASVAgentNode(Node):
 
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
-        # Publisher for this agent's state
-        self.state_pub = self.create_publisher(Float32MultiArray, f'/agent_{self.agent_id}/state_update', 10)
+        # Publisher for this agent's state - QoS depth=1 to avoid message accumulation
+        self.state_pub = self.create_publisher(Float32MultiArray, f'/agent_{self.agent_id}/state_update', 1)
 
-        # Subscriber for this agent's action
-        self.action_sub = self.create_subscription(Float32MultiArray, f'/agent_{self.agent_id}/action', self.action_callback, 10)
+        # Subscriber for this agent's action - QoS depth=1 for immediate processing
+        self.action_sub = self.create_subscription(Float32MultiArray, f'/agent_{self.agent_id}/action', self.action_callback, 1)
 
         # Subscriber to this agent's specific reset signal
-        self.reset_sub = self.create_subscription(Float32MultiArray, f'/agent_{self.agent_id}/reset', self.reset_callback, 10)
+        self.reset_sub = self.create_subscription(Float32MultiArray, f'/agent_{self.agent_id}/reset', self.reset_callback, 1)
 
         self.get_logger().info(f'ASV Agent Node {self.agent_id} started and waiting for reset.')
 
