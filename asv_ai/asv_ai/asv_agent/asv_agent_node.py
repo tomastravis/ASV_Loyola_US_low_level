@@ -45,8 +45,6 @@ class ASVAgentNode(Node):
         # Subscriber to this agent's specific reset signal
         self.reset_sub = self.create_subscription(Float32MultiArray, f'/agent_{self.agent_id}/reset', self.reset_callback, 1)
 
-        self.get_logger().info(f'ASV Agent Node {self.agent_id} started and waiting for reset.')
-
     def reset_callback(self, msg):
         """Resets the agent to an initial state provided by the environment."""
         initial_state = np.array(msg.data)
@@ -55,16 +53,12 @@ class ASVAgentNode(Node):
             # Convert ROS state to ASV model format and reset physical model
             asv_state = self._convert_ros_to_asv_state(initial_state)
             self.asv_model.x = asv_state
-            self.get_logger().info(f'Agent {self.agent_id} reset to {self.state}')
             self.publish_state_and_tf()
 
     def action_callback(self, msg):
         """Applies an action using physical model, updates physics, and publishes the new state."""
         # Convert ROS message to NumPy array
         action = DataConverter.ros_to_numpy(msg)
-
-        # Throttled logging for performance
-        self.get_logger().info(f'Agent {self.agent_id} received action: {action.tolist()}', throttle_duration_sec=5.0)
 
         # Convert normalized action to physical action format expected by ASVAgent
         physical_action = self._convert_action_to_physical(action)
@@ -85,7 +79,6 @@ class ASVAgentNode(Node):
         # Always publish state immediately for responsive visualization
         state_msg = DataConverter.numpy_to_ros(self.state)
         self.state_pub.publish(state_msg)
-        self.get_logger().info(f'Agent {self.agent_id} published state: {self.state.tolist()}', throttle_duration_sec=5.0)
 
         # Rate-limited TF publishing for performance (but still responsive)
         if current_time - self.last_tf_publish_time >= self.tf_publish_interval:

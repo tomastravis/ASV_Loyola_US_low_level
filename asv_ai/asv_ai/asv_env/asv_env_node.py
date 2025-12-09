@@ -23,6 +23,11 @@ class ASVEnvNode(Node):
         self.agent_states = [None] * self.num_agents
         self.received_updates_this_step = [False] * self.num_agents
         self.loop_started = False
+        
+        # Step counter for reset conditions
+        self.current_step = 0
+        self.max_steps_per_episode = 10000
+        self.collision_distance = 0.5  # meters
 
         # Create a parametrized path for formation calculations
         self.param_path = ParametrizedPath(path_no=0)
@@ -101,8 +106,6 @@ class ASVEnvNode(Node):
         # Keepalive timer (SLOWED DOWN for easier debugging/visualization)
         self.keepalive_timer = self.create_timer(5.0, self._keepalive_publish)  # 2 seconds (was 1.0s)
 
-        self.get_logger().info(f'ASV Environment Node started with {self.num_agents} agents')
-
         # Create QoS profile for visualization (reliable, keep last 10)
         viz_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.RELIABLE,
@@ -124,18 +127,11 @@ class ASVEnvNode(Node):
                 self.agent_states[agent_id] = state
                 self.received_updates_this_step[agent_id] = True
 
-                self.get_logger().info(f'Received state from agent {agent_id}: {state.tolist()}', throttle_duration_sec=5.0)
-
-                # Debug current state of agent updates
-                self.get_logger().info(f'Agent updates: {self.received_updates_this_step}, loop_started: {self.loop_started}', throttle_duration_sec=5.0)
-
                 # If all agents have reported, update the environment state
                 if all(self.received_updates_this_step) and self.loop_started:
                     self.publish_environment_state()
                     self.calculate_reward()
                     self.received_updates_this_step = [False] * self.num_agents
-                else:
-                    self.get_logger().info(f'Not publishing yet: all_reported={all(self.received_updates_this_step)}, loop_started={self.loop_started}', throttle_duration_sec=5.0)
             except Exception as e:
                 self.get_logger().error(f'Error in state callback for agent {agent_id}: {str(e)}')
 
@@ -165,27 +161,63 @@ class ASVEnvNode(Node):
         self._last_actions = actions.copy()
 
         self.loop_started = True
+        self.current_step += 1
+        
+        # Check reset conditions BEFORE applying actions
+        should_reset, reason = self._check_reset_conditions()
+        if should_reset:
+            self.get_logger().info(f'Episode reset: {reason} (step {self.current_step})')
+            self.current_step = 0
+            self.trigger_reset()
+            # Publish done=True
+            self.done_pub.publish(Bool(data=True))
+            return
 
         for i in range(self.num_agents):
             action_slice = actions[i*2:(i+1)*2]
             action_msg = DataConverter.numpy_to_ros(action_slice)
             self.agent_action_pubs[i].publish(action_msg)
-            self.get_logger().info(f'Published action to agent {i}: {action_slice.tolist()}')
+    
+    def _check_reset_conditions(self):
+        """Check if episode should be reset. Returns (should_reset, reason)."""
+        # Check max steps
+        if self.current_step >= self.max_steps_per_episode:
+            return True, f'max steps reached ({self.max_steps_per_episode})'
+        
+        # Check collision (distance < 0.5m)
+        if self._check_collision_distance():
+            return True, 'collision detected (distance < 0.5m)'
+        
+        return False, ''
+    
+    def _check_collision_distance(self):
+        """Check if any two agents are closer than collision_distance."""
+        if self.num_agents < 2:
+            return False
+        
+        if any(s is None for s in self.agent_states):
+            return False
+        
+        for i in range(self.num_agents):
+            for j in range(i+1, self.num_agents):
+                pos_i = self.agent_states[i][:2]
+                pos_j = self.agent_states[j][:2]
+                distance = np.linalg.norm(pos_i - pos_j)
+                if distance < self.collision_distance:
+                    return True
+        return False
 
     def publish_environment_state(self):
         try:
             # Only publish if all agents have reported at least once
             if any(s is None for s in self.agent_states):
-                self.get_logger().warn('Attempted to publish state, but not all agents have reported.')
                 return
 
             # Basic agent states array (original data)
             agent_states_array = np.array(self.agent_states)
-            self.get_logger().info(f'Agent states for publishing: {[s.tolist() for s in self.agent_states]}')
 
             # Calculate virtual leader position and path derivative
             pos_v, deriv = self.param_path.path(self.param_path.theta, True)
-            self.get_logger().info(f'Virtual leader position: {pos_v.tolist()}, derivative: {deriv}')
 
             # Calculate formation centroid from mean of agent positions
             centroid = np.mean(np.array([state[:2] for state in self.agent_states]), axis=0)
@@ -238,11 +270,6 @@ class ASVEnvNode(Node):
             # Publish the extended state
             state_msg = Float32MultiArray(data=global_state.tolist())
             self.state_pub.publish(state_msg)
-
-            self.get_logger().info(
-                f'Published extended environment state with {len(global_state)} elements',
-                throttle_duration_sec=5.0
-            )
         except Exception as e:
             self.get_logger().error(f'Error in publish_environment_state: {str(e)}')
 
@@ -295,7 +322,6 @@ class ASVEnvNode(Node):
             self.agent_reset_pubs[i].publish(reset_msg)
 
         self.received_updates_this_step = [False] * self.num_agents
-        self.get_logger().info('Reset all agents to initial positions')
 
     def calculate_reward(self):
         # Only calculate if all agents have reported
@@ -435,12 +461,6 @@ class ASVEnvNode(Node):
         if not hasattr(self, '_reward_log_counter'):
             self._reward_log_counter = 0
         self._reward_log_counter += 1
-        if self._reward_log_counter % 100 == 0:
-            self.get_logger().info(
-                f'Reward breakdown: still={avg_stillness:.2f}, vel_pen={avg_velocity_penalty:.2f}, '
-                f'drift={avg_drift_penalty:.2f}, act_pen={action_penalty:.2f}, zero_bonus={zero_action_bonus:.2f} '
-                f'-> total={reward:.2f}'
-            )
 
         # Cache the reward
         self._cached_reward = reward
@@ -455,45 +475,24 @@ class ASVEnvNode(Node):
 
     def check_done(self):
         # Episode is done if:
-        # 1. There's a collision between agents
-        # 2. Formation has reached a successful state
+        # 1. There's a collision between agents (< 0.5m)
+        # 2. Max steps reached (handled in action_callback)
 
         # Check for collisions
-        if self.check_collision():
+        if self._check_collision_distance():
             return True
-
-        # Check for successful formation
-        centroid = np.mean(np.array([state[:2] for state in self.agent_states]), axis=0)
-        along_track_error = self.param_path.along_track_error(centroid)
-
-        # Success if along track error is small (adjusted for scaled coordinates)
-        return along_track_error < 2.0  # Smaller threshold for scaled system
-
-    def check_collision(self):
-        if self.num_agents < 2:
-            return False
-
-        # Check distances between all pairs of agents
-        for i in range(self.num_agents):
-            for j in range(i+1, self.num_agents):
-                pos_i = self.agent_states[i][:2]
-                pos_j = self.agent_states[j][:2]
-                distance = np.linalg.norm(pos_i - pos_j)
-
-                # Collision threshold - increased for formation flying
-                if distance < 1.0:  # Smaller threshold since agents are in formation
-                    return True
 
         return False
 
+    def check_collision(self):
+        """Legacy method - use _check_collision_distance instead."""
+        return self._check_collision_distance()
+
     def _force_first_publish(self):
-        self.get_logger().info(f'AGENT STATES: {[s is not None for s in self.agent_states]}')
         if all(s is not None for s in self.agent_states):
-            self.get_logger().info('First state publish forced to break action-state deadlock')
             self.publish_environment_state()
             return True
         else:
-            self.get_logger().info('Waiting for all agents to report before forcing first state')
             return False
 
     def reset_callback(self, request, response):
@@ -533,7 +532,6 @@ class ASVEnvNode(Node):
 
         # Publish reset message to this agent
         self.agent_reset_pubs[agent_id].publish(reset_msg)
-        self.get_logger().info(f"Reset agent {agent_id} to position {position}")
 
         # Clear any cached state for this agent
         self.agent_states[agent_id] = None

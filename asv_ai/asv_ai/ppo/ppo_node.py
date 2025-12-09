@@ -149,12 +149,10 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
             vf_coef=0.5,
             max_grad_norm=0.5
         )
-        self.get_logger().info('No existing model found, starting with new CustomPPO model.')
 
         self.model_ready = True
         # If we received a state while loading, process it now
         if self._pending_state is not None:
-            self.get_logger().info('Processing buffered environment state after model init.')
             self._predict_and_publish(self._pending_state)
             self._pending_state = None
 
@@ -188,10 +186,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
 
             self.reset_timer = self.create_timer(30.0, self.check_and_reset)  # 30 seconds (was 20s)
 
-            self.get_logger().info("PPO training mode enabled")
-
-            self.get_logger().info(f'PPO Node started with {self.num_agents} agents')
-
         # New - create session timestamp at startup for consistent file naming
         self.session_start_time = self.get_clock().now()
         self.formatted_timestamp = self.session_start_time.to_msg()
@@ -216,11 +210,9 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         try:
             # Convert ROS message to NumPy array
             flat_state = DataConverter.ros_to_numpy(msg)
-            self.get_logger().info(f'PPO received state with shape {flat_state.shape}', throttle_duration_sec=1)
 
             # If state buffer is full, we need to reset it before adding more
             if hasattr(self, 'training_buffer') and self.training_buffer.full:
-                self.get_logger().info("Training buffer full, resetting to allow more training data")
                 self.training_buffer.reset()
 
             # Check if agents are out of bounds and log the problematic positions
@@ -240,7 +232,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
             if not self.model_ready:
                 # Buffer the latest state until model is ready
                 self._pending_state = flat_state
-                self.get_logger().info('Model not ready yet; buffering environment state.', throttle_duration_sec=1)
                 return
 
             self._predict_and_publish(flat_state)
@@ -279,7 +270,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
                     # Check if we need to reset buffer due to memory limit
                     if buffer_size >= self.memory_limit:
                         self.training_stats['memory_resets'] += 1
-                        self.get_logger().info(f"Buffer reached memory limit ({buffer_size}/{self.memory_limit}), resetting for memory management - Reset #{self.training_stats['memory_resets']}")
                         self.training_buffer.reset()
                         buffer_size = 0
 
@@ -295,9 +285,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
                                 values=self.last_values,
                                 log_probs=self.last_log_probs
                             )
-                            # Log every 10 transitions
-                            if (buffer_size + 1) % 10 == 0:
-                                self.get_logger().info(f"Buffer now has {buffer_size + 1} transitions", throttle_duration_sec=5.0)
                 except Exception as e:
                     self.get_logger().error(f"Error adding to training buffer: {e}")
 
@@ -315,8 +302,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
             action_flat = DataConverter.ppo_output_to_actions(actions_np, self.num_agents)
             action_msg = Float32MultiArray(data=action_flat.tolist())
             self.action_pub.publish(action_msg)
-
-            self.get_logger().info(f"Published PPO action: {actions_np.tolist()}")
 
         except Exception as e:
             self.get_logger().error(f"Error in _predict_and_publish: {str(e)}")
@@ -455,8 +440,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
             # Write to file (single write operation)
             with open(episode_filename, 'w') as f:
                 json.dump(episode_data, f, indent=2)
-
-            self.get_logger().info(f"Saved episode {self.episode_id} to {episode_filename} ({len(self.rollout_data)} transitions)")
         except Exception as e:
             self.get_logger().error(f"Failed to save episode {self.episode_id}: {e}")
 
@@ -470,7 +453,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         self.last_reward = None
         self.step_idx = 0
         self.episode_id += 1
-        self.get_logger().info(f"Starting episode {self.episode_id}")
 
     def collect_rollouts(self, rollout_dir: str | None = None, save_every_steps: int | None = None):
         """Configure where to save rollouts collected from ROS topics.
@@ -482,11 +464,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         if rollout_dir is not None:
             self.rollout_dir = os.path.expanduser(rollout_dir)
             os.makedirs(self.rollout_dir, exist_ok=True)
-        if save_every_steps is not None:
-            self.get_logger().warn("save_every_steps is deprecated - episodes are saved individually")
-        self.get_logger().info(
-            f"Rollout collection configured: dir={self.rollout_dir}, session={self.session_id}"
-        )
 
     def reward_callback(self, msg):
         self.last_reward = msg.data
@@ -496,7 +473,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         """Handle episode completion for training and rollout collection."""
         if msg.data:
             self.episode_rewards.append(self.current_episode_reward)
-            self.get_logger().info(f"Episode {self.episode_id} finished with total reward: {self.current_episode_reward:.4f}")
             self.current_episode_reward = 0.0
 
             if self.training_enabled:
@@ -505,7 +481,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
 
             # Finalize episode for rollout collection
             self._finalize_episode()
-            self.get_logger().info(f'Episode {self.episode_id-1} finished')
 
             if self.training_enabled and self.episode_id > 0 and self.episode_id % 3 == 0:
                 # Try to train every 3 episodes
@@ -513,7 +488,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
 
             # Limit number of episodes if needed
             if self.episode_id >= self.max_episodes:
-                self.get_logger().info(f"Reached maximum episodes ({self.max_episodes}). Shutting down...")
                 self._save_model("max episodes reached")
                 rclpy.shutdown()
 
@@ -536,7 +510,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         try:
             with open(metadata_filename, 'w') as f:
                 json.dump(metadata, f, indent=2)
-            self.get_logger().info(f"Initialized session metadata: {metadata_filename}")
         except Exception as e:
             self.get_logger().error(f"Failed to initialize session metadata: {e}")
 
@@ -548,16 +521,9 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         # Check how many valid transitions we have
         buffer_size = len(self.training_buffer)  # Use __len__ which returns self.pos
 
-        # Log buffer status with memory information
-        memory_usage_kb = (buffer_size * 76) / 1024  # Approximate memory usage
-        self.get_logger().info(f"Buffer status: {buffer_size}/{self.buffer_size} transitions ({memory_usage_kb:.1f} KB)")
-
         # Progressive training: train when we have minimum viable batch (not when full)
         if buffer_size < self.min_training_size:
-            self.get_logger().info(f"Not enough data for training: {buffer_size}/{self.min_training_size} minimum required")
             return
-
-        self.get_logger().info(f"Training PPO model on {buffer_size} transitions (progressive training)")
 
         try:
             # Compute returns and advantages
@@ -580,20 +546,9 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
 
             for epoch in range(self.n_epochs):
                 approx_kl_divs = []
-                minibatch_count = 0
 
                 # Process minibatches
                 for rollout_data in self.training_buffer.get(self.batch_size):
-                    minibatch_count += 1
-                    self.get_logger().info(
-                        f"################################################## Minibatch {minibatch_count}"
-                    )
-                    self.get_logger().info(
-                        f"Actions shape: {rollout_data.actions.shape}, first: {rollout_data.actions[0]}"
-                    )
-                    self.get_logger().info(
-                        f"Observations shape: {rollout_data.observations.shape}, first: {rollout_data.observations[0]}"
-                    )
                     actions = rollout_data.actions
 
                     # Evaluate actions
@@ -638,20 +593,10 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
                         approx_kl_div = th.mean((th.exp(log_ratio) - 1) - log_ratio).cpu().numpy()
                         approx_kl_divs.append(approx_kl_div)
 
-                # Log minibatch count
-                if minibatch_count == 0:
-                    self.get_logger().warn(f"WARNING: Epoch {epoch+1} - NO MINIBATCHES GENERATED! Buffer may be empty or misconfigured.")
-                else:
-                    self.get_logger().info(f"Epoch {epoch+1} processed {minibatch_count} minibatches")
-
-                mean_kl = np.mean(approx_kl_divs)
-                self.get_logger().info(
-                    f"Epoch {epoch+1}/{self.n_epochs}, approx_kl={mean_kl:.6f}, lr={current_lr:.6f}"
-                )
+                mean_kl = np.mean(approx_kl_divs) if approx_kl_divs else 0.0
 
                 # Early stopping
                 if self.model.target_kl is not None and mean_kl > 1.5 * self.model.target_kl:
-                    self.get_logger().info(f"Early stopping at epoch {epoch+1} due to reaching max KL: {mean_kl:.6f}")
                     break
 
             # Update training statistics
@@ -661,22 +606,20 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
                 self.training_stats['total_transitions_trained'] /
                 self.training_stats['total_training_sessions']
             )
-
-            # Log training statistics
+            
+            # Log training progress
+            avg_reward = np.mean(self.episode_rewards[-10:]) if self.episode_rewards else 0.0
             self.get_logger().info(
-                f"Training complete. Sessions: {self.training_stats['total_training_sessions']}, "
-                f"Total transitions: {self.training_stats['total_transitions_trained']}, "
-                f"Avg buffer size: {self.training_stats['average_buffer_size_at_training']:.1f}"
+                f"Training #{self.training_stats['total_training_sessions']}: "
+                f"ep={self.episode_id}, transitions={buffer_size}, "
+                f"avg_reward={avg_reward:.2f}, kl={mean_kl:.4f}"
             )
 
-            # Smart buffer management: reset strategically - FIX: use len()
+            # Smart buffer management: reset strategically
             current_buffer_size = len(self.training_buffer)
-            if current_buffer_size >= self.memory_limit * 0.8:  # Reset when 80% of memory limit
+            if current_buffer_size >= self.memory_limit * 0.8:
                 self.training_stats['memory_resets'] += 1
-                self.get_logger().info(f"Resetting buffer for memory management ({current_buffer_size}/{self.memory_limit}) - Reset #{self.training_stats['memory_resets']}")
                 self.training_buffer.reset()
-            else:
-                self.get_logger().info(f"Keeping buffer for continuous learning ({current_buffer_size}/{self.memory_limit})")
         except Exception as e:
             self.get_logger().error(f"Error during training: {e}")
 
@@ -713,7 +656,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         try:
             response = future.result()
             if response.success:
-                self.get_logger().info('Environment reset successful')
                 # Reset internal state variables
                 self.last_state = None
                 self.last_action = None
@@ -817,7 +759,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         # Try to load the first available model
         for model_path, description in model_candidates:
             try:
-                self.get_logger().info(f"Attempting to load model from {description}: {model_path}")
                 # Load model without environment - we'll validate spaces separately
                 obs_dim = self.num_agents * self.obs_dim_per_agent
                 action_dim = self.num_agents * self.action_dim_per_agent
@@ -827,8 +768,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
                     self.model = CustomPPO.load(model_path, obs_dim=obs_dim, action_dim=action_dim, device='cpu')
                 except Exception as e:
                     # For now, create a new CustomPPO model if loading fails
-                    self.get_logger().warn(f"Could not load model from {model_path}: {e}")
-                    self.get_logger().warn("Creating new CustomPPO model - consider retraining")
                     self.model = CustomPPO(obs_dim=obs_dim, action_dim=action_dim, device='cpu')
                     continue  # Try next model candidate
 
@@ -843,22 +782,14 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
                     # Check for EXACT match (strict homogeneity)
                     if (model_obs_shape == expected_obs_shape and 
                         model_act_shape == expected_act_shape):
-                        self.get_logger().info(f"✓ Model spaces match exactly: obs={model_obs_shape}, action={model_act_shape}")
+                        self.get_logger().info(f"Model loaded: {model_path}")
                         return model_path
                     else:
                         # Reject incompatible models for integrity
-                        self.get_logger().error(f"✗ INCOMPATIBLE MODEL - Space shapes don't match:")
-                        self.get_logger().error(f"  Expected: obs={expected_obs_shape}, action={expected_act_shape}")
-                        self.get_logger().error(f"  Got:      obs={model_obs_shape}, action={model_act_shape}")
-                        self.get_logger().error(f"  → Model trained with different space format")
-                        self.get_logger().error(f"  → Please retrain model or use compatible checkpoint")
-                        # Don't return this model - try next candidate
+                        self.get_logger().error(f"INCOMPATIBLE MODEL: expected obs={expected_obs_shape}, action={expected_act_shape}, got obs={model_obs_shape}, action={model_act_shape}")
                         continue
-                else:
-                    self.get_logger().warn(f"✗ Model loaded but appears invalid from {description}")
 
             except Exception as e:
-                self.get_logger().warn(f"✗ Failed to load model from {description}: {str(e)}")
                 continue
 
         # No model could be loaded
@@ -875,17 +806,15 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
             timestamp_model_path = os.path.join(self.rollout_dir, f"ppo_model_ep{self.episode_id}.zip")
             self.model.save(timestamp_model_path)
             
-            self.get_logger().info(f"Model saved ({reason}): {latest_model_path}")
-            self.get_logger().info(f"Checkpoint saved: {timestamp_model_path}")
+            self.get_logger().info(f"Model saved: {latest_model_path} (ep{self.episode_id}, {reason})")
             
         except Exception as e:
             self.get_logger().error(f"Failed to save model: {e}")
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals by saving model and cleaning up."""
-        self.get_logger().info(f"Received signal {signum}, saving model before shutdown...")
         if hasattr(self, 'model') and self.model is not None:
-            self._save_model("interrupt/shutdown")
+            self._save_model("shutdown")
         
         # Graceful shutdown
         if hasattr(self, 'training_timer'):
@@ -893,7 +822,6 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         if hasattr(self, 'reset_timer'):
             self.reset_timer.cancel()
             
-        self.get_logger().info("Graceful shutdown complete")
         rclpy.shutdown()
 
     def get_training_insights(self):
