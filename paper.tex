@@ -1,0 +1,618 @@
+\documentclass[preprint,3p]{elsarticle}
+
+
+\usepackage[ruled, linesnumbered]{algorithm2e}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{subfigure}
+\usepackage{xcolor, soul}
+\usepackage{hyperref}
+
+\newcommand{\fcom}[1]{{ \color{orange}\textbf{Fede:} #1}}
+\newcommand{\tcom}[1]{{ \color{blue}\textbf{Tomás:} #1}}
+
+
+\newcommand{\checked}{$\text{\rlap{$\checkmark$}}\square$}
+\newcommand{\unchecked}{$\square$}
+
+\journal{Mechatronics}
+\begin{document}
+\begin{frontmatter}
+
+\title{Applications of Proximal Policy Optimization using ROS2: Autonomous Surface Fleet Control case study}
+
+
+\author[inst1]{Tomás Travis Aquino}
+\affiliation[inst1]{organization={Organization},
+            addressline={Empresa}, 
+            city={Seville},
+            postcode={41004},
+            country={Spain}}
+            
+\author[inst2]{Federico Peralta Samaniego}
+\affiliation[inst2]{organization={Department of Engineering},
+            addressline={Universidad Loyola Andalucía}, 
+            city={Dos Hermanas},
+            postcode={41704},
+            country={Spain}}
+
+            
+\begin{abstract}
+.
+\end{abstract}
+
+% \begin{graphicalabstract}
+% \begin{figure}[ht!]
+%     \centering
+%     \includegraphics[width=\textwidth]{graphical_abstract.pdf}
+% \end{figure}
+% \vfill
+% \end{graphicalabstract}
+
+% \begin{highlights}
+%     \item 
+% \end{highlights}
+
+\begin{keyword}
+Proximal Policy Optimization \sep ROS
+\end{keyword}
+
+\end{frontmatter}
+
+\section{Introduction}
+
+\fcom{Yo me encargo de esta parte, voy a hablar de IA en la robotica y también de los ASV}
+
+% \begin{figure}[htbp]
+%     \centering
+%     \includegraphics[width=0.5\textwidth]{wqom0.jpg}
+%     \caption{Example of an Autonomous Surface Vehicle that is being utilized for Water Quality Monitoring.}
+%     \label{fig:asv}
+% \end{figure}
+
+
+The main contributions of this work can be summarized as follows:
+
+\begin{itemize}
+    \item 
+\end{itemize}
+
+The rest of this work is further divided into different sections. Section \ref{related} presents the related works. In Section \ref{statement}, the statement of the problem is defined, including some assumptions and considerations. Next, Section \ref{proposed} comprises the proposed approach, which is evaluated for performance and is compared with similar approaches in Section \ref{performance}. Finally, Section \ref{conclusion} presents the conclusions of this work, as well as the future works. 
+
+\section{Related Works}
+\label{related}
+
+Our work builds upon two foundational areas: reinforcement learning policy optimization and marine vehicle dynamics modeling. Proximal Policy Optimization (PPO), introduced by Schulman et al. \cite{schulman2017proximalpolicyoptimizationalgorithms}, has emerged as one of the most effective policy gradient algorithms in deep reinforcement learning, offering stable training through its clipped surrogate objective while maintaining simplicity and sample efficiency. For autonomous surface vehicle modeling, Fossen's Handbook of Marine Craft Hydrodynamics and Motion Control \cite{fossen2011handbook} provides the authoritative framework for representing marine vessel dynamics, including the standard 6-DOF formulation and its simplified 3-DOF version for surface vessels. While PPO has been successfully applied to various robotics tasks and marine vehicle dynamics are well-understood, existing work typically treats training and deployment as separate phases. Our contribution addresses this gap by proposing a unified ROS2-based architecture that enables continuous learning during mission execution.
+
+\vspace{0.5em}
+
+\tcom{Se pidio orientarlo más a ROS y usar referencias como Proximal Policy Optimization Algorithms y  Fossen’s Handbook}
+
+\tcom{Usar esas dos referencias: HECHO}
+
+\tcom{Ampliar y usar más referencias relacionadas con ROS: PENDIENTE}
+
+% \begin{table*}[ht]
+%     \caption{Brief Summary of Related Works indicating whether the works consider or not multiple agents and multiple objectives.}
+%     \label{tab:summary}
+%     \centering
+%     \begin{tabular}{cccc}
+%         \hline
+%             \textbf{Ref. (Year)}                     & \textbf{Path Planning Approach} & \textbf{M-Agent} & \textbf{M-Obj.} \\\hline
+%          \cite{karapetyan2018multi} (2018)  & Dubins Coverage with Area/Route Clustering & \checked & \unchecked \\
+%          \cite{nicholson2018rapid} (2018)   & Human Operated & \unchecked  & \checked\\
+%          \cite{dutta2019multi} (2019)       & Multi-Robot Informative Path Planning & \checked & \unchecked\\
+%          \cite{popovic2020informative} (2020) & Informative 3D Path Planning for Terrain Mapping & \unchecked & \unchecked\\
+%          \cite{kathen2021informative} (2021)& Gaussian Process-based Particle Swarm Optimization & \checked  & \checked\\
+%          \cite{peralta2021bayesian2} (2021)   & Multi-Function Estimation with Bayesian Optimization & \unchecked & \checked \\\hline
+%     \end{tabular}
+% \end{table*}
+
+
+\section{Statement of the Problem}
+\label{statement}
+
+\fcom{Definir brevemente la justificacion de esto, seguidamente de cual es el problema, desde el punto de vista de implementación: el gap que queremos cubrir es la conexión entre entrenar modelos RL y las aplicaciones reales}
+
+\tcom{Hablamos de agentes autonomos, ejemplos de robots que juegan al futbol (en ese paper hacen una transferencia de conociemiento pero a nosotros nos interesa el poder entrenar en vivo en vida real). Proponemos que se pueda entrenar en el mismo ecosistema/codigo que estamos proporcionando. En el futuro, alguien puede hacer un entrenamiento hibrido donde se entrena con un simular + a la vez con sistemas reales = usa ambos y hace un mix para que se exponga a situaciones reales. Cuanto mas real mejor.
+
+Como estamos organizando los mensajes, como estamos preparando para enviar los grupos de accion, estado recompensa, etc.
+Media pagina de longitud.}
+
+\vspace{0.5em}
+
+\tcom{PROVISIONAL. Reescribir con mis palabras}
+
+\vspace{0.5em}
+
+\textbf{Motivation and Gap Identification}
+
+Deep reinforcement learning has demonstrated impressive capabilities in simulated multi-agent scenarios, from robotic manipulation to cooperative navigation tasks [cite]. However, a fundamental challenge persists: traditional RL workflows separate training from deployment into distinct phases with different codebases. Agents are trained offline in simulation environments using specialized training frameworks, then the learned policies are exported and integrated into separate deployment code running on physical systems. This separation introduces several critical issues: (1) domain gaps between simulation and reality that degrade performance, (2) inability to adapt policies post-deployment when encountering novel conditions, and (3) complex integration overhead when translating between training and production environments.
+
+\vspace{0.5em}
+
+\textbf{Proposed Solution: Unified Training-Deployment Ecosystem}
+
+Our work eliminates this artificial separation by proposing a unified ROS2-based architecture where training and deployment occur within the same codebase and runtime environment. The key insight is that ROS2's message-passing infrastructure can simultaneously serve both operational control and reinforcement learning data collection, enabling agents to train continuously during mission execution without requiring separate training infrastructure.
+
+The framework implements a message orchestration system where:
+\begin{itemize}
+\item \textbf{State collection}: Agent states (position, velocity, orientation) are broadcast via \texttt{/environment/state} topics, consumed both by the control loop for real-time decision-making and by the training buffer for policy updates.
+
+\item \textbf{Action distribution}: PPO-generated actions published to \texttt{/ppo/action} are simultaneously executed on physical/simulated agents and stored as training samples, eliminating the need for separate action logging systems.
+
+\item \textbf{Reward calculation}: Real-time performance metrics are computed and published to \texttt{/environment/reward}, providing immediate learning signals that reflect actual operational outcomes rather than simulated approximations.
+\end{itemize}
+
+This unified approach means the exact same code that controls physical ASVs also handles policy training—no separate training scripts, no model export/import procedures, and no environment switching. Researchers can launch the system with \texttt{training\_enabled:=true} for live learning or \texttt{training\_enabled:=false} for pure inference, using identical node implementations in both modes.
+
+\vspace{0.5em}
+
+\textbf{Hybrid Training Paradigm}
+
+The architecture naturally extends to hybrid scenarios where multiple data sources contribute to training simultaneously. The ROS2 publish-subscribe model allows experience from both simulated agents (running in Gazebo or custom simulators) and physical robots to flow into the same training buffer. This enables future work on mixed reality training where agents learn from abundant synthetic data while continuously refining their policies with sparse but high-fidelity real-world samples—maximizing sample efficiency while ensuring robust deployment performance.
+
+
+
+\section{Proposed Approach}
+\label{proposed}
+\fcom{Por eso, nuestra propuesta se basa en ROS, explicar brevemente ROS y luego entrar en detalle de nuestra arquitectura.}
+
+\tcom{Aqui hablamos de estado, accion, recomenpensa y demas. Aqui diagrama, capturas de la simulacion,... la parte que mas ocupe }
+
+This section presents the technical architecture of our ROS2-based framework for multi-agent ASV formation control using Proximal Policy Optimization. We describe the system components, the reinforcement learning formulation, and the implementation details that enable live training in real-world scenarios.
+
+\subsection{ROS2 as Middleware for Live Training}
+
+Robot Operating System 2 (ROS2) serves as the communication middleware that bridges reinforcement learning algorithms with physical robotic systems. Unlike traditional RL frameworks that operate in isolated simulation environments, ROS2 provides the capabilities that enable our live training paradigm:
+
+\begin{itemize}
+    \item \textbf{Distributed architecture}: The publish-subscribe model decouples training, control, and sensing components. This allows independent development and testing of each subsystem.
+    
+    \item \textbf{Message standardization}: Uniform data structures (Float32MultiArray, custom interfaces) ensure compatibility between simulated and physical agents without code modifications.
+    
+    \item \textbf{Quality of Service (QoS) policies}: Configurable reliability and history settings guarantee that critical training data (states, actions, rewards) are not lost during network disruptions or system transitions.
+    
+    \item \textbf{Real-time capabilities}: Built on DDS (Data Distribution Service), ROS2 provides deterministic latency bounds suitable for control-critical applications while maintaining training data flow.
+\end{itemize}
+
+This middleware approach contrasts with conventional RL implementations where training occurs offline in simulation, followed by a separate deployment phase. Our architecture treats training as a continuous process that coexists with mission execution.
+
+\subsection{System Architecture}
+
+Our multi-agent formation control system comprises four primary ROS2 nodes that collectively implement the training-control loop, as illustrated in Figure~\ref{fig:architecture}. 
+
+\tcom{Captura de rqt graph?}
+
+% TODO: Add system architecture diagram showing nodes and topics
+% \begin{figure}[htbp]
+%     \centering
+%     \includegraphics[width=\textwidth]{figures/ros2_architecture.pdf}
+%     \caption{ROS2 node architecture for multi-agent PPO training. Arrows represent topics, showing bidirectional communication between environment aggregation, PPO training, and individual agents.}
+%     \label{fig:architecture}
+% \end{figure}
+
+\subsubsection{ASV Agent Nodes (\texttt{asv\_agent\_node})}
+
+Each autonomous surface vehicle is represented by an independent node that encapsulates both the physical dynamics and the interface to the training system. For a fleet of $n$ agents, we instantiate $n$ parallel nodes (\texttt{agent\_0}, \texttt{agent\_1}, ..., \texttt{agent\_n-1}).
+
+\vspace{1em}
+
+\tcom{Interesa esto?}
+\textbf{Physical Dynamics Model:} Each agent implements a 3-DOF marine vessel model based on \cite{fossen2011handbook}:
+
+\begin{equation}
+    \mathbf{M}\dot{\boldsymbol{\nu}} + \mathbf{C}(\boldsymbol{\nu})\boldsymbol{\nu} + \mathbf{D}(\boldsymbol{\nu})\boldsymbol{\nu} = \boldsymbol{\tau}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\boldsymbol{\nu} = [u, v, r]^T$ represents body-frame velocities (surge, sway, yaw rate)
+    \item $\mathbf{M} = \text{diag}(m - X_{\dot{u}}, m - Y_{\dot{v}}, I_z - N_{\dot{r}})$ is the mass-inertia matrix including hydrodynamic added mass effects ($m = 23.8$ kg, $I_z = 1.76$ kg·m²)
+    \item $\mathbf{C}(\boldsymbol{\nu})$ captures Coriolis and centripetal forces
+    \item $\mathbf{D}(\boldsymbol{\nu})$ represents linear and quadratic drag with coefficients $X_u = -0.72$, $X_{u|u|} = -1.33$, $Y_v = -0.89$, $Y_{v|v|} = -36.47$, $N_r = -1.9$, $N_{r|r|} = -0.75$
+    \item $\boldsymbol{\tau} = [F_{\text{surge}}, 0, \tau_{\text{yaw}}]^T$ is the control input vector
+\end{itemize}
+
+The dynamics are integrated using a 4-step Runge-Kutta scheme with sub-stepping ($\Delta t = 0.025$ s) for numerical stability, while the overall ROS2 control loop operates at 10 Hz.
+
+\vspace{1em}
+
+\textbf{State Representation:} Each agent maintains and publishes its state vector:
+
+\begin{equation}
+    \mathbf{x}_i = [x_i, y_i, \psi_i, v_{x,i}, v_{y,i}, \omega_i]^T
+\end{equation}
+
+where $(x_i, y_i) \in \mathbb{R}^2$ denotes global position in a NED (North-East-Down) coordinate frame, $\psi_i \in [-\pi, \pi]$ is the heading angle, and $(v_{x,i}, v_{y,i}, \omega_i)$ represent global-frame velocities (converted from body-frame for consistency with navigation systems).
+
+\vspace{1em}
+
+\textbf{ROS2 Interface:} Each agent node implements:
+\begin{itemize}
+    \item \textit{Publisher}: \texttt{/agent\_\{i\}/state\_update} (Float32MultiArray, 10 Hz) broadcasts current state
+    \item \textit{Subscriber}: \texttt{/agent\_\{i\}/action} (Float32MultiArray) receives control commands
+    \item \textit{Subscriber}: \texttt{/agent\_\{i\}/reset} (Float32MultiArray) accepts new initial conditions
+    \item \textit{TF2 Broadcaster}: Publishes geometric transformations (\texttt{map} $\rightarrow$ \texttt{ASV\{i\}/base\_link}) at 20 Hz for visualization
+\end{itemize}
+
+\subsubsection{Environment Aggregation Node (\texttt{asv\_env\_node})}
+
+This centralized coordinator aggregates individual agent states into a unified observation vector and manages the reinforcement learning episode lifecycle.
+
+\vspace{1em}
+
+\textbf{Global Observation Construction:} Upon receiving state updates from all $n$ agents, the environment node constructs:
+
+\begin{equation}
+    \mathbf{o}_t = \begin{bmatrix}
+        \mathbf{x}_1^T & \mathbf{p}_{d,1}^T & \cdots & \mathbf{x}_n^T & \mathbf{p}_{d,n}^T & \mathbf{p}_v^T & e_f & e_{ct}
+    \end{bmatrix}^T
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\mathbf{p}_{d,i} \in \mathbb{R}^2$ is the desired formation position for agent $i$ (derived from virtual leader geometry)
+    \item $\mathbf{p}_v \in \mathbb{R}^2$ is the current virtual leader position along the reference trajectory
+    \item $e_f \in \mathbb{R}$ is the average formation error across all agents
+    \item $e_{ct} \in \mathbb{R}$ is the cross-track error of the formation centroid
+\end{itemize}
+
+The observation dimension is $\dim(\mathbf{o}_t) = 6n + 2n + 2 + 1 + 1 = 8n + 4$ for $n$ agents.
+
+\vspace{1em}
+
+\textbf{Virtual Leader and Formation Geometry:} We adopt a leader-follower formation strategy where the reference is defined by a parametric path $\mathbf{p}(\theta)$ with parameter $\theta \in \mathbb{R}^+$. The desired position for agent $i$ is:
+
+\begin{equation}
+    \mathbf{p}_{d,i}(\theta) = \mathbf{p}_v(\theta) + l_m \begin{bmatrix} \cos(\alpha(\theta) + \beta_i) \\ \sin(\alpha(\theta) + \beta_i) \end{bmatrix}
+\end{equation}
+
+where $l_m = 3.0$ m is the formation radius, $\alpha(\theta)$ is the path tangent angle, and $\beta_i = \frac{2\pi i}{n}$ distributes agents uniformly in a circular formation around the virtual leader.
+
+\textbf{Reward Computation:} The environment calculates a composite reward signal (detailed in Section~\ref{subsec:reward}) based on both velocity alignment and positional accuracy, then publishes it to \texttt{/environment/reward}.
+
+\vspace{1em}
+
+\textbf{Action Distribution:} When receiving a centralized action vector from the PPO node, the environment decomposes it into agent-specific commands and publishes to individual \texttt{/agent\_\{i\}/action} topics:
+
+\begin{equation}
+    \mathbf{a}_t = [a_{1,1}, a_{1,2}, \ldots, a_{n,1}, a_{n,2}]^T \quad \rightarrow \quad \{\mathbf{a}_{1,t}, \ldots, \mathbf{a}_{n,t}\}
+\end{equation}
+
+\textbf{Episode Management:} The node monitors termination conditions:
+\begin{itemize}
+    \item \textit{Success}: Along-track error falls below threshold ($e_{ate} < 5.0$ m)
+    \item \textit{Failure}: Any agent exceeds operational boundaries ($x \in [-15, 35]$, $y \in [-15, 35]$)
+    \item \textit{Timeout}: Episode exceeds maximum duration (2048 time steps)
+\end{itemize}
+
+Upon episode termination, the node publishes a \texttt{Bool} message to \texttt{/environment/done} and triggers environment reset via service call.
+
+\subsubsection{PPO Training Node (\texttt{asv\_ppo\_node})}
+
+This node implements the core reinforcement learning algorithm using Stable-Baselines3 \tcom{Citar articulo aqui?} \cite{stable-baselines3} while interfacing with the ROS2 ecosystem.
+
+\vspace{1em}
+
+\textbf{Policy Architecture:} We employ a multi-layer perceptron (MLP) policy with architecture:
+
+\begin{equation}
+    \text{Input}(\mathbb{R}^{8n+4}) \rightarrow \text{Dense}(256) \rightarrow \text{ReLU} \rightarrow \text{Dense}(256) \rightarrow \text{ReLU} \rightarrow \text{Output}(\mathbb{R}^{2n})
+\end{equation}
+
+The policy network outputs a Gaussian distribution over actions: $\pi_\theta(\mathbf{a}|\mathbf{o}) = \mathcal{N}(\boldsymbol{\mu}_\theta(\mathbf{o}), \boldsymbol{\sigma}_\theta^2)$ where $\boldsymbol{\sigma}_\theta$ is learned during training.
+
+\vspace{1em}
+
+\textbf{Action Space:} Actions are normalized to $\mathcal{A} = [-1, 1]^{2n}$ and then scaled to physical control ranges:
+
+\begin{align}
+    \tau_{\text{yaw},i} &= a_{i,1} \times 1.15 \text{ N·m} \\
+    F_{\text{surge},i} &= (a_{i,2} + 1.0) \times 1.0 \text{ N}
+\end{align}
+
+This mapping ensures surge force remains positive (0 to 2 N) while yaw torque can be bidirectional.
+
+\vspace{1em}
+
+\textbf{Experience Collection and Training:} The node maintains a rollout buffer $\mathcal{B}$ that stores transitions $(\mathbf{o}_t, \mathbf{a}_t, r_t, \mathbf{o}_{t+1}, d_t)$ collected from ROS2 topics, where $\mathbf{o}_t$ is the observation at time $t$, $\mathbf{a}_t$ is the action executed, $r_t$ is the immediate reward, $\mathbf{o}_{t+1}$ is the resulting next state, and $d_t \in \{0,1\}$ indicates episode termination. Unlike traditional batch RL, we implement \textit{progressive training}:
+
+\begin{itemize}
+    \item \textbf{Buffer capacity}: 200 transitions (approximately 20 seconds of experience at 10 Hz)
+    \item \textbf{Training trigger}: Update policy when $|\mathcal{B}| \geq 50$ (minimum viable batch)
+    \item \textbf{Update frequency}: Train every 3 complete episodes or when buffer reaches 80\% capacity
+    \item \textbf{Memory management}: Reset buffer when approaching limit (500 transitions) to prevent memory overflow
+\end{itemize}
+
+This strategy attempts to be able to adapt quickly to changing conditions and maintain sample efficiency. This is important for live training scenarios where data collection is expensive.
+
+\vspace{1em}
+
+\textbf{Model Persistence:} The node automatically saves checkpoints:
+\begin{itemize}
+    \item Episode-specific: \texttt{ppo\_model\_ep\{k\}.zip} every $k$ episodes
+    \item Latest model: \texttt{latest\_model.zip} (overwritten each training session)
+    \item Final model: \texttt{ppo\_model\_final.zip} at episode limit
+\end{itemize}
+
+This enables warm-start training from previous sessions and offline evaluation of intermediate policies.
+
+\textbf{ROS2 Interface:}
+\begin{itemize}
+    \item \textit{Subscriber}: \texttt{/environment/state} receives aggregated observations
+    \item \textit{Subscriber}: \texttt{/environment/reward} receives reward signals
+    \item \textit{Subscriber}: \texttt{/environment/done} detects episode termination
+    \item \textit{Publisher}: \texttt{/ppo/action} publishes centralized action vectors
+    \item \textit{Service}: \texttt{/environment/reset} triggers episode resets
+\end{itemize}
+
+\subsubsection{Visualization Node (RViz2)}
+
+Real-time visualization is provided through RViz2, which subscribes to TF2 transformations and marker topics to display:
+\begin{itemize}
+    \item 3D ASV meshes with accurate pose tracking
+    \item Desired formation positions (yellow markers)
+    \item Virtual leader position (green marker)
+    \item Formation centroid and path projection (cyan and magenta markers)
+    \item Reference trajectory (red line)
+    \item Operational boundaries (color-coded safety zones)
+\end{itemize}
+
+\tcom{Foto de simulación RVIZ}
+% TODO: Add RViz screenshot
+% \begin{figure}[htbp]
+%     \centering
+%     \includegraphics[width=0.85\textwidth]{figures/rviz_formation.png}
+%     \caption{RViz2 visualization of two-agent formation control. Yellow circles indicate desired positions, ASVs are shown as 3D meshes with orientation vectors.}
+%     \label{fig:rviz}
+% \end{figure}
+
+\subsection{Reinforcement Learning Formulation}
+
+\vspace{1em}
+
+\subsubsection{Markov Decision Process}
+
+\tcom{Me da la sensación de que sobra}
+
+We formulate the multi-agent formation control problem as a centralized MDP $\langle \mathcal{S}, \mathcal{A}, P, R, \gamma \rangle$:
+
+\begin{itemize}
+    \item \textbf{State space}: $\mathcal{S} \subset \mathbb{R}^{8n+4}$ as defined in Equation (3)
+    \item \textbf{Action space}: $\mathcal{A} = [-1, 1]^{2n}$ (normalized control inputs)
+    \item \textbf{Transition dynamics}: $P(\mathbf{s}_{t+1}|\mathbf{s}_t, \mathbf{a}_t)$ governed by Equation (1) for each agent
+    \item \textbf{Reward function}: $R: \mathcal{S} \times \mathcal{A} \rightarrow \mathbb{R}$ (described below)
+    \item \textbf{Discount factor}: $\gamma = 0.99$
+\end{itemize}
+
+\vspace{1em}
+
+\subsubsection{Reward Function Design}
+\label{subsec:reward}
+
+The reward function balances multiple objectives: efficient motion toward formation positions, maintaining formation geometry, and minimizing unnecessary control effort.
+
+\vspace{1em}
+
+\textbf{Velocity Alignment Reward:} Encourages agents to move in the direction of their desired formation positions with appropriate heading:
+
+\begin{equation}
+    R_v = \frac{k_v}{n} \sum_{i=1}^n \left[ u_i \cos(\alpha_i) - (|v_i| + |r_i|) |\sin(\alpha_i)| \right]
+\end{equation}
+
+where $k_v = 2.75$ is a tuning parameter, and $\alpha_i$ is the angle between the desired direction vector $\mathbf{p}_{d,i} - [x_i, y_i]^T$ and the agent's current heading $\psi_i$:
+
+\begin{equation}
+    \alpha_i = \arctan2(\Delta y_i, \Delta x_i) - \psi_i
+\end{equation}
+
+This reward component penalizes excessive sway ($v_i$) and yaw rate ($r_i$) when heading is misaligned, promoting smooth trajectory following.
+
+\vspace{1em}
+
+\textbf{Distance Penalty:} Penalizes formation errors to drive agents toward their assigned positions:
+
+\begin{equation}
+    R_d = \frac{k_d}{n} \sum_{i=1}^n \left( -\frac{\|\mathbf{p}_{d,i} - [x_i, y_i]^T\|_2}{e_{\max}} \right)
+\end{equation}
+
+with $k_d = 2.0$ and $e_{\max} = 10.0$ m serving as a normalization constant. This term provides a continuous gradient for position correction.
+
+\textbf{Success Bonus:} Provides sparse positive reinforcement when the formation achieves tight trajectory tracking:
+
+\begin{equation}
+    R_{\text{success}} = \begin{cases}
+        +1.0 & \text{if } e_{ate} < 5.0 \text{ m} \\
+        0 & \text{otherwise}
+    \end{cases}
+\end{equation}
+
+where $e_{ate} = \|\mathbf{c} - \mathbf{p}_v(\theta)\|_2$ is the along-track error and $\mathbf{c} = \frac{1}{n}\sum_{i=1}^n [x_i, y_i]^T$ is the formation centroid.
+
+\vspace{1em}
+
+\textbf{Total Reward:} The composite reward at each time step is:
+
+\begin{equation}
+    r_t = R_v + R_d + R_{\text{success}}
+\end{equation}
+
+This multi-objective formulation ensures that learned policies exhibit both goal-reaching behavior (via $R_d$) and efficient, dynamically-feasible motion (via $R_v$), while the success bonus provides clear episodic objectives.
+
+\subsection{PPO Training Algorithm}
+
+\tcom{Realmente necesario?}
+Our implementation follows the clipped surrogate objective from \cite{schulman2017proximalpolicyoptimizationalgorithms}:
+
+\begin{equation}
+    L^{\text{CLIP}}(\theta) = \mathbb{E}_t \left[ \min\left( \rho_t(\theta) \hat{A}_t, \, \text{clip}(\rho_t(\theta), 1-\epsilon, 1+\epsilon) \hat{A}_t \right) \right]
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\rho_t(\theta) = \frac{\pi_\theta(\mathbf{a}_t|\mathbf{o}_t)}{\pi_{\theta_{\text{old}}}(\mathbf{a}_t|\mathbf{o}_t)}$ is the probability ratio between new and old policies
+    \item $\hat{A}_t$ is the advantage estimate computed using Generalized Advantage Estimation (GAE-$\lambda$) \cite{schulman2015high}
+    \item $\epsilon = 0.2$ is the clipping parameter
+\end{itemize}
+
+The advantage estimates are computed as:
+
+\begin{equation}
+    \hat{A}_t = \sum_{l=0}^{T-t} (\gamma \lambda)^l \delta_{t+l}
+\end{equation}
+
+where $\delta_t = r_t + \gamma V_\phi(\mathbf{o}_{t+1}) - V_\phi(\mathbf{o}_t)$ are temporal difference residuals and $\lambda = 0.95$ controls the bias-variance trade-off.
+
+\vspace{1em}
+
+\textbf{Training Hyperparameters:}
+\begin{itemize}
+    \item Batch size: 64 transitions
+    \item Optimization epochs per update: 10
+    \item Learning rate: $3 \times 10^{-4}$ (Adam optimizer)
+    \item Entropy coefficient: $c_{\text{ent}} = 0.01$ (for exploration)
+    \item Value function coefficient: $c_{\text{vf}} = 0.5$
+    \item Gradient clipping: $\|\nabla_\theta L\|_2 \leq 0.5$
+\end{itemize}
+
+\textbf{Exploration Strategy:} To encourage exploration during training, we add time-decaying Gaussian noise to actions:
+
+\begin{equation}
+    \mathbf{a}_t^{\text{explore}} = \mathbf{a}_t + \mathcal{N}(0, \sigma_{\text{noise}}(t)^2 \mathbf{I})
+\end{equation}
+
+where $\sigma_{\text{noise}}(t) = \max(0.1, 1.0 - t/200) \times 0.3$ decreases linearly over the first 200 episodes, balancing exploration and exploitation.
+
+\subsection{Data Logging and Reproducibility}
+
+To facilitate offline analysis and reproducibility, our system implements comprehensive logging:
+
+\vspace{1em}
+
+\textbf{Structured Rollout Files:} Each training session generates a JSON file containing:
+\begin{itemize}
+    \item Episode-level metadata (timestamps, episode IDs, termination reasons)
+    \item Transition-level data (states, actions, rewards) with structured formatting
+    \item Agent-specific information (positions, velocities, desired positions)
+    \item Formation metrics (errors, centroid trajectory, virtual leader path)
+\end{itemize}
+
+\vspace{1em}
+
+\textbf{Training Statistics:} The PPO node tracks and logs:
+\begin{itemize}
+    \item Policy gradient metrics (KL divergence, entropy, explained variance)
+    \item Buffer utilization (transitions collected, training frequency)
+    \item Episode returns and success rates
+    \item Checkpoint metadata (model versions, hyperparameters)
+\end{itemize}
+
+All data is timestamped and indexed, enabling post-mission analysis and comparison of different training strategies.
+
+\subsection{Launch Configuration and Deployment}
+
+The system provides two launch files for different operational modes:
+
+\vspace{1em}
+
+\textbf{Inference Mode} (\texttt{asv\_system.launch.py}): Loads a pre-trained model and executes formation control without training updates. Parameters include:
+\begin{itemize}
+    \item \texttt{num\_agents}: Number of ASVs in the fleet (default: 2)
+    \item \texttt{model\_path}: Path to trained PPO checkpoint
+\end{itemize}
+
+Example execution command:
+\begin{verbatim}
+ros2 launch asv_ai asv_system.launch.py \
+    num_agents:=2 model_path:=~/models/latest_model.zip
+\end{verbatim}
+
+\vspace{1em}
+
+\textbf{Training Mode} (\texttt{asv\_train.launch.py}): Enables live training with configurable hyperparameters:
+\begin{itemize}
+    \item \texttt{training\_enabled}: Boolean flag to enable/disable training
+    \item \texttt{train\_frequency}: Steps between PPO updates (default: 1000)
+    \item \texttt{n\_epochs}: Training epochs per update (default: 10)
+    \item \texttt{batch\_size}: Minibatch size for gradient updates (default: 64)
+    \item \texttt{rollout\_dir}: Directory for saving models and logs
+    \item \texttt{enable\_visualization}: Toggle RViz2 (disable for headless training)
+\end{itemize}
+
+Example launch command:
+\begin{verbatim}
+ros2 launch asv_ai asv_train.launch.py num_agents:=3 \
+    training_enabled:=true rollout_dir:=~/experiments/run_01
+\end{verbatim}
+
+\subsection{Scalability and Extensibility}
+
+The modular ROS2 architecture naturally supports several extensions:
+
+\vspace{1em}
+
+\textbf{Variable Team Sizes:} Launch files are parameterized by $n$, automatically instantiating the appropriate number of agent nodes and adjusting observation/action dimensions.
+
+\vspace{1em}
+
+\textbf{Heterogeneous Agents:} Different ASV models (e.g., varying masses, drag coefficients) can coexist by implementing the common state/action interface defined by the Float32MultiArray messages.
+
+\vspace{1em}
+
+\textbf{Custom Trajectories:} The \texttt{ParametrizedPath} class can be extended with complex reference paths such as Bézier curves, B-splines, or GPS waypoint sequences.
+
+\vspace{1em}
+
+\textbf{Alternative RL Algorithms:} The environment interface is compatible with any Stable-Baselines3 algorithm (SAC, TD3, A2C) or custom implementations, requiring only subscription to the state/reward topics and publication to the action topic.
+
+\vspace{1em}
+
+\textbf{Sim-to-Real Transfer:} The identical message interfaces between simulation and physical hardware enable seamless deployment: policies trained in simulation can be directly loaded onto physical ASVs running the same ROS2 nodes, with only hardware-specific drivers (motor controllers, GPS, IMU) requiring platform-specific implementation.
+
+\subsection{Summary}
+
+Our proposed ROS2-PPO architecture advances multi-agent autonomous systems through:
+\begin{enumerate}
+    \item \textbf{Live training capability}: Continuous policy improvement during operational missions, not confined to offline training phases.
+    \item \textbf{Modular design}: Clear separation of concerns (dynamics, aggregation, learning, visualization) enabling independent development and testing.
+    \item \textbf{Physically-grounded simulation}: Realistic marine vessel dynamics ensure learned behaviors transfer to hardware.
+    \item \textbf{Standardized interfaces}: ROS2 message contracts facilitate integration with existing robotic ecosystems and future algorithm extensions.
+\end{enumerate}
+
+\tcom{Adjuntamos el enlace del repositorio?}
+The complete system implementation, including source code, launch files, and configuration parameters, is available at \url{https://github.com/manuelgantiva/ASV_Loyola_US_low_level} to promote reproducibility and community adoption.
+
+
+\section{Performance Evaluation}
+\label{performance}
+
+
+
+\subsection{Simulation Setup}
+
+
+
+\subsection{Simulation Results}
+
+\subsubsection{Proposed Approach Results}
+
+\subsubsection{Method Comparison}
+
+
+\subsection{Summary of the Results}
+
+
+\section{Conclusion and Future Works}
+\label{conclusion}
+
+
+
+\section*{Funding}
+This work has been partially funded by the 
+
+ \bibliographystyle{elsarticle-num} 
+ \bibliography{cas-refs}
+\end{document}
