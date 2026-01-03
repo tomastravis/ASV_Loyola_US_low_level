@@ -20,6 +20,16 @@ class ASVEnvNode(Node):
         self.declare_parameter('num_agents', 2)
         self.num_agents = self.get_parameter('num_agents').value
 
+        # Debug/logging controls
+        self.declare_parameter('debug_log_interval_sec', 5.0)
+        self.debug_log_interval = float(self.get_parameter('debug_log_interval_sec').value)
+        self.spin_yaw_rate_thresh = 0.3
+        self.spin_speed_thresh = 0.5
+        self.spin_window = 30
+        self.spin_counter = 0
+        self.spin_triggered = False
+        self._last_debug_metrics = {}
+
         self.agent_states = [None] * self.num_agents
         self.received_updates_this_step = [False] * self.num_agents
         self.loop_started = False
@@ -97,6 +107,9 @@ class ASVEnvNode(Node):
 
         # Keepalive timer (SLOWED DOWN for easier debugging/visualization)
         self.keepalive_timer = self.create_timer(5.0, self._keepalive_publish)  # 2 seconds (was 1.0s)
+
+        # Periodic debug logger
+        self.debug_timer = self.create_timer(self.debug_log_interval, self._log_debug_stats)
 
         self.get_logger().info(f'ASV Environment Node started with {self.num_agents} agents')
 
@@ -402,6 +415,42 @@ class ASVEnvNode(Node):
         # Final reward: encourage stillness, penalize movement and drift
         reward = avg_stillness + avg_velocity_penalty + avg_drift_penalty
 
+        # --- Debug metrics ---
+        centroid = np.mean(agent_positions, axis=0)
+        cross_track_error = self.param_path.cross_track_error(centroid)
+        along_track_error = self.param_path.along_track_error(centroid)
+        formation_error = float(np.mean(np.linalg.norm(position_errors, axis=1)))
+        heading_error = float(np.mean(np.abs(np.arctan2(position_errors[:, 1], position_errors[:, 0]) - agent_orientations)))
+
+        mean_yaw_rate = float(np.mean(agent_velocities[:, 2]))
+        mean_abs_yaw_rate = float(np.mean(np.abs(agent_velocities[:, 2])))
+        mean_speed = float(np.mean(np.sqrt(agent_velocities[:, 0]**2 + agent_velocities[:, 1]**2)))
+
+        spin_condition = mean_abs_yaw_rate > self.spin_yaw_rate_thresh and mean_speed < self.spin_speed_thresh
+        if spin_condition:
+            self.spin_counter += 1
+        else:
+            self.spin_counter = 0
+
+        if self.spin_counter >= self.spin_window:
+            self.spin_triggered = True
+
+        self._last_debug_metrics = {
+            "reward": float(reward),
+            "avg_stillness": float(avg_stillness),
+            "avg_velocity_penalty": float(avg_velocity_penalty),
+            "avg_drift_penalty": float(avg_drift_penalty),
+            "cross_track_error": float(cross_track_error),
+            "along_track_error": float(along_track_error),
+            "formation_error": formation_error,
+            "heading_error": heading_error,
+            "mean_speed": mean_speed,
+            "mean_yaw_rate": mean_yaw_rate,
+            "mean_abs_yaw_rate": mean_abs_yaw_rate,
+            "spin_counter": self.spin_counter,
+            "spin_triggered": self.spin_triggered
+        }
+
         # Cache the reward
         self._cached_reward = reward
         self._last_reward_time = current_time
@@ -630,6 +679,21 @@ class ASVEnvNode(Node):
         )
 
         return markers
+
+    def _log_debug_stats(self):
+        """Periodically log concise metrics to spot spinning or drift."""
+        if not self._last_debug_metrics:
+            return
+
+        m = self._last_debug_metrics
+        summary = (
+            f"reward={m.get('reward'):.3f} | cte={m.get('cross_track_error'):.3f} | "
+            f"along_err={m.get('along_track_error'):.3f} | form_err={m.get('formation_error'):.3f} | "
+            f"heading_err={m.get('heading_error'):.3f} | speed={m.get('mean_speed'):.3f} | "
+            f"yaw_rate={m.get('mean_yaw_rate'):.3f} | spin_cnt={m.get('spin_counter')} | "
+            f"spin_triggered={m.get('spin_triggered')}"
+        )
+        self.get_logger().info(f"[env_debug] {summary}")
 
 
 def main(args=None):

@@ -31,6 +31,8 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         self.declare_parameter('rollout_dir', os.path.expanduser('~/Desktop/PPO_Rollouts'))
         self.declare_parameter('rollout_save_every', 500)
         self.declare_parameter('rollout_collection_enabled', True)
+        # Debug/logging cadence
+        self.declare_parameter('log_interval_sec', 5.0)
         
         # Parameters - State/Action Space Dimensions (generalizable for any robot/environment)
         self.declare_parameter('obs_dim_per_agent', 6)  # Default: [x, y, yaw, vx, vy, vyaw]
@@ -42,6 +44,7 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         self.rollout_dir = os.path.expanduser(self.get_parameter('rollout_dir').value)
         self.rollout_save_every = int(self.get_parameter('rollout_save_every').value)
         self.rollout_collection_enabled = self.get_parameter('rollout_collection_enabled').value
+        self.log_interval_sec = float(self.get_parameter('log_interval_sec').value)
         
         # Resolve space dimensions (generalizable)
         self.obs_dim_per_agent = self.get_parameter('obs_dim_per_agent').value
@@ -115,6 +118,9 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
         self.action_pub = self.create_publisher(Float32MultiArray, '/ppo/action', 10)
 
         self.reset_client = self.create_client(Trigger, '/environment/reset')
+
+        # Periodic debug stats
+        self.log_timer = self.create_timer(self.log_interval_sec, self._log_debug_stats)
 
         # Define observation and action spaces for PPO model (generalizable via parameters)
         # These stay in PPO node as they are model-specific, not environment-specific
@@ -487,6 +493,32 @@ class PPONode(Node):  # Renamed from ASVPPONode for generalization (Point 8)
     def reward_callback(self, msg):
         self.last_reward = msg.data
         self.current_episode_reward += msg.data
+
+    def _log_debug_stats(self):
+        """Periodic lightweight stats to spot collapse/spin issues."""
+        try:
+            action_mean = None
+            action_std = None
+            if self.last_action is not None:
+                action_mean = float(np.mean(self.last_action))
+                action_std = float(np.std(self.last_action))
+
+            buffer_pos = None
+            if self.training_enabled and hasattr(self, 'training_buffer'):
+                buffer_pos = int(self.training_buffer.pos)
+
+            msg_parts = [
+                f"episode={self.episode_id}",
+                f"step={self.step_idx}",
+                f"last_reward={self.last_reward if self.last_reward is not None else 'n/a'}",
+                f"rollout_len={len(self.rollout_data)}",
+                f"buffer_pos={buffer_pos if buffer_pos is not None else 'n/a'}",
+                f"action_mean={action_mean if action_mean is not None else 'n/a'}",
+                f"action_std={action_std if action_std is not None else 'n/a'}"
+            ]
+            self.get_logger().info("[ppo_debug] " + " | ".join(msg_parts))
+        except Exception as e:
+            self.get_logger().warn(f"[ppo_debug] failed to log stats: {e}")
 
     def done_callback(self, msg):
         """Handle episode completion for training and rollout collection."""
