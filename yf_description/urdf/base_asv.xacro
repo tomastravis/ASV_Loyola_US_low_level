@@ -3,13 +3,12 @@
   <xacro:macro name="base_asv" params="name">
     <link
       name="${name}/base_link">
-      <visual>
+      <visual name="hull">
         <origin
           xyz="0 0 0"
-          rpy="0 0 ${pi/2}" />
+          rpy="0 0 0" />
         <geometry>
-          <mesh
-            filename="package://yf_description/meshes/base_link.STL" />
+          <box size="0.95 0.48 0.16" />
         </geometry>
         <material
           name="">
@@ -53,10 +52,9 @@
       <collision>
         <origin
           xyz="0 0 0"
-          rpy="0 0 ${pi/2}" />
+          rpy="0 0 0" />
         <geometry>
-          <mesh
-            filename="package://yf_description/meshes/base_link.STL" />
+          <box size="0.95 0.48 0.16" />
         </geometry>
       </collision>
     </link>
@@ -68,8 +66,7 @@
           xyz="0 0 0"
           rpy="0 0 0" />
         <geometry>
-          <mesh
-            filename="package://yf_description/meshes/Motor_izquierda_link.STL" />
+          <box size="0.18 0.08 0.08" />
         </geometry>
         <material
           name="">
@@ -82,8 +79,7 @@
           xyz="0 0 0"
           rpy="0 0 0" />
         <geometry>
-          <mesh
-            filename="package://yf_description/meshes/Motor_izquierda_link.STL" />
+          <box size="0.18 0.08 0.08" />
         </geometry>
       </collision>
     </link>
@@ -94,8 +90,7 @@
           xyz="0 0 0"
           rpy="0 0 0" />
         <geometry>
-          <mesh
-            filename="package://yf_description/meshes/Motor_derecha_link.STL" />
+          <box size="0.18 0.08 0.08" />
         </geometry>
         <material
           name="">
@@ -108,8 +103,7 @@
           xyz="0 0 0"
           rpy="0 0 0" />
         <geometry>
-          <mesh
-            filename="package://yf_description/meshes/Motor_derecha_link.STL" />
+          <box size="0.18 0.08 0.08" />
         </geometry>
       </collision>
     </link>

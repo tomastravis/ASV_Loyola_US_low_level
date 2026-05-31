@@ -82,10 +82,10 @@ class ASVAgent:
     # Traduce la acción del agente a fuerza y momento de rotación para el ASV
     def get_force_tau(action):
         '''                            intervalos de acción
-        action 0 es la fuerza de surge [0, 2] (1 como minimo ¿por qué?)
+        action 0 es la fuerza de surge [-1, 1], con 0 como sin empuje.
         action 1 es el momento de rotación [-0.5, 0.5]
         '''
-        return np.vstack([action[0] + 1, 0, action[1]/2.3])
+        return np.vstack([action[0], 0, action[1]/2.3])
 
     # Simular el movimiento del ASV.
     # Calcula cómo el estado del ASV (posición, orientación y velocidades)
@@ -165,4 +165,3 @@ class ASVAgent:
         # negativo para restarle recompesa si es muy grande
 
 # Recomepensa y penalización
-

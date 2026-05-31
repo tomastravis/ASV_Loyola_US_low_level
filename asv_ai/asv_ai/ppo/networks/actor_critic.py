@@ -19,11 +19,14 @@ class CustomActorCritic(nn.Module):
     Critic network outputs value estimates V(s).
     """
     
-    def __init__(self, obs_dim, action_dim, hidden_sizes=[64, 64], activation=nn.Tanh):
+    def __init__(self, obs_dim, action_dim, hidden_sizes=[64, 64], activation=nn.Tanh,
+                 initial_log_std=-1.5, initial_surge_action_bias=0.0):
         super(CustomActorCritic, self).__init__()
-        
+
         self.obs_dim = obs_dim
         self.action_dim = action_dim
+        self.initial_log_std = initial_log_std
+        self.initial_surge_action_bias = initial_surge_action_bias
         
         # Shared feature extraction layers
         layers = []
@@ -56,9 +59,14 @@ class CustomActorCritic(nn.Module):
         # Special initialization for policy output layer (smaller weights)
         nn.init.orthogonal_(self.actor_mean.weight, gain=0.01)
         nn.init.constant_(self.actor_mean.bias, 0.0)
-        
-        # Initialize log_std to reasonable values
-        nn.init.constant_(self.actor_log_std, -0.5)  # std ≈ 0.6
+        if self.initial_surge_action_bias != 0.0:
+            surge_bias = float(np.arctanh(np.clip(self.initial_surge_action_bias, -0.95, 0.95)))
+            with torch.no_grad():
+                self.actor_mean.bias[1::2].fill_(surge_bias)
+
+        # Keep initial exploration gentle. With centered surge, the untrained
+        # policy should mostly test near "no thrust" instead of launching away.
+        nn.init.constant_(self.actor_log_std, self.initial_log_std)  # -1.5 => std ≈ 0.22
     
     def forward(self, obs):
         """

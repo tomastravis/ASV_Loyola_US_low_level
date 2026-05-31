@@ -19,6 +19,55 @@ class ASVEnvNode(Node):
 
         self.declare_parameter('num_agents', 2)
         self.num_agents = self.get_parameter('num_agents').value
+        self.declare_parameter('training_mode', 'fast')
+        self.training_mode = str(self.get_parameter('training_mode').value)
+        self.debug_logging = self.training_mode == 'debug'
+        self.declare_parameter('reward_mode', 'path_following')
+        self.reward_mode = str(self.get_parameter('reward_mode').value)
+        self.declare_parameter('max_episode_steps', 1000)
+        self.max_episode_steps = int(self.get_parameter('max_episode_steps').value)
+        self.declare_parameter('goal_progress_delta', 12.0)
+        self.goal_progress_delta = float(self.get_parameter('goal_progress_delta').value)
+        self.declare_parameter('reset_offset_range', 2.0)
+        self.reset_offset_range = float(self.get_parameter('reset_offset_range').value)
+        self.declare_parameter('min_reset_separation', 2.0)
+        self.min_reset_separation = float(self.get_parameter('min_reset_separation').value)
+        self.declare_parameter('reset_yaw_mode', 'random')
+        self.reset_yaw_mode = str(self.get_parameter('reset_yaw_mode').value).strip().lower()
+        self.declare_parameter('reset_yaw_noise', float(np.pi))
+        self.reset_yaw_noise = max(0.0, float(self.get_parameter('reset_yaw_noise').value))
+        self.declare_parameter('path_target_speed', 0.08)
+        self.path_target_speed = max(1e-6, float(self.get_parameter('path_target_speed').value))
+        self.declare_parameter('path_low_speed_penalty_scale', 0.8)
+        self.path_low_speed_penalty_scale = max(
+            0.0,
+            float(self.get_parameter('path_low_speed_penalty_scale').value)
+        )
+        self.declare_parameter('formation_distance', 3.0)
+        self.formation_distance = max(0.1, float(self.get_parameter('formation_distance').value))
+        self.declare_parameter('formation_penalty_scale', 0.35)
+        self.formation_penalty_scale = max(
+            0.0,
+            float(self.get_parameter('formation_penalty_scale').value)
+        )
+        self.declare_parameter('formation_bonus_scale', 0.0)
+        self.formation_bonus_scale = max(
+            0.0,
+            float(self.get_parameter('formation_bonus_scale').value)
+        )
+        self.declare_parameter('formation_bonus_width', 1.0)
+        self.formation_bonus_width = max(
+            1e-6,
+            float(self.get_parameter('formation_bonus_width').value)
+        )
+        self.declare_parameter('visualization_enabled', True)
+        self.visualization_enabled = self._as_bool(self.get_parameter('visualization_enabled').value)
+
+        if self.reset_yaw_mode not in ('random', 'path_aligned'):
+            self.get_logger().warn(
+                f"Unknown reset_yaw_mode '{self.reset_yaw_mode}', falling back to 'random'."
+            )
+            self.reset_yaw_mode = 'random'
 
         # Debug/logging controls
         self.declare_parameter('debug_log_interval_sec', 5.0)
@@ -33,6 +82,13 @@ class ASVEnvNode(Node):
         self.agent_states = [None] * self.num_agents
         self.received_updates_this_step = [False] * self.num_agents
         self.loop_started = False
+        self.episode_step = 0
+        self.last_termination_reason = 'running'
+        self._last_progress_scalar = None
+        self._initial_progress_scalar = None
+        self._first_publish_timer = None
+        self._reference_positions = None
+        self._reference_update_time = 0.0
 
         # Create a parametrized path for formation calculations
         self.param_path = ParametrizedPath(path_no=0)
@@ -47,8 +103,11 @@ class ASVEnvNode(Node):
         self.safety_boundary_pub = self.create_publisher(Marker, '/asv_env/safety_boundary', qos_profile)
         self.warning_boundary_pub = self.create_publisher(Marker, '/asv_env/warning_boundary', qos_profile)
 
-        # Timer to periodically publish visualizations
-        self.viz_timer = self.create_timer(0.1, self.publish_visualization) # 10 Hz for smoother animation
+        # Timer to periodically publish visualizations. Headless training can
+        # skip these marker updates and spend the budget on simulation/PPO.
+        self.viz_timer = None
+        if self.visualization_enabled:
+            self.viz_timer = self.create_timer(0.1, self.publish_visualization)
 
         # Create a parametrized path for formation calculations
         self.param_path = ParametrizedPath()
@@ -64,7 +123,6 @@ class ASVEnvNode(Node):
 
         # Assign formation angles to each agent (distributed around the circle)
         self.agent_betas = [2 * np.pi * i / self.num_agents for i in range(self.num_agents)]
-        self.formation_distance = 3.0  # Smaller formation distance
 
         # Cache for expensive calculations (performance optimization)
         self._cached_virtual_leader_pos = None
@@ -111,7 +169,18 @@ class ASVEnvNode(Node):
         # Periodic debug logger
         self.debug_timer = self.create_timer(self.debug_log_interval, self._log_debug_stats)
 
-        self.get_logger().info(f'ASV Environment Node started with {self.num_agents} agents')
+        self.get_logger().info(
+            f'ASV Environment Node started with {self.num_agents} agents '
+            f'(mode={self.training_mode}, reward_mode={self.reward_mode}, '
+            f'max_episode_steps={self.max_episode_steps}, '
+            f'reset_yaw_mode={self.reset_yaw_mode}, '
+            f'reset_yaw_noise={self.reset_yaw_noise:.3f}, '
+            f'path_target_speed={self.path_target_speed:.3f}, '
+            f'formation_distance={self.formation_distance:.3f}, '
+            f'formation_penalty_scale={self.formation_penalty_scale:.3f}, '
+            f'formation_bonus_scale={self.formation_bonus_scale:.3f}, '
+            f'visualization_enabled={self.visualization_enabled})'
+        )
 
         # Create QoS profile for visualization (reliable, keep last 10)
         viz_qos = QoSProfile(
@@ -122,6 +191,24 @@ class ASVEnvNode(Node):
 
         # Visualization timer (update every 0.2 seconds for smoother visualization)
         # self.viz_timer = self.create_timer(0.2, self.publish_visualization)  # Already created above
+
+    @staticmethod
+    def _as_bool(value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in ('1', 'true', 'yes', 'on')
+        return bool(value)
+
+    @staticmethod
+    def _wrap_angle(angle):
+        return float((angle + np.pi) % (2 * np.pi) - np.pi)
+
+    def _sample_reset_yaw(self, path_heading):
+        if self.reset_yaw_mode == 'path_aligned':
+            noise = np.random.uniform(-self.reset_yaw_noise, self.reset_yaw_noise)
+            return self._wrap_angle(path_heading + noise)
+        return float(np.random.uniform(-np.pi, np.pi))
 
     def create_state_callback(self, agent_id):
         def callback(msg):
@@ -134,17 +221,19 @@ class ASVEnvNode(Node):
                 self.agent_states[agent_id] = state
                 self.received_updates_this_step[agent_id] = True
 
-                self.get_logger().info(f'Received state from agent {agent_id}: {state.tolist()}', throttle_duration_sec=5.0)
+                if self.debug_logging:
+                    self.get_logger().info(f'Received state from agent {agent_id}: {state.tolist()}', throttle_duration_sec=5.0)
 
                 # Debug current state of agent updates
-                self.get_logger().info(f'Agent updates: {self.received_updates_this_step}, loop_started: {self.loop_started}', throttle_duration_sec=5.0)
+                if self.debug_logging:
+                    self.get_logger().info(f'Agent updates: {self.received_updates_this_step}, loop_started: {self.loop_started}', throttle_duration_sec=5.0)
 
                 # If all agents have reported, update the environment state
                 if all(self.received_updates_this_step) and self.loop_started:
                     self.publish_environment_state()
                     self.calculate_reward()
                     self.received_updates_this_step = [False] * self.num_agents
-                else:
+                elif self.debug_logging:
                     self.get_logger().info(f'Not publishing yet: all_reported={all(self.received_updates_this_step)}, loop_started={self.loop_started}', throttle_duration_sec=5.0)
             except Exception as e:
                 self.get_logger().error(f'Error in state callback for agent {agent_id}: {str(e)}')
@@ -159,7 +248,7 @@ class ASVEnvNode(Node):
         self.loop_started = True
 
         # Wait a short time for agents to report their initial states
-        self.create_timer(0.5, self._force_first_publish)
+        self._first_publish_timer = self.create_timer(0.5, self._force_first_publish)
 
         self.initial_timer.cancel()  # Only run once
 
@@ -177,7 +266,8 @@ class ASVEnvNode(Node):
             action_slice = actions[i*2:(i+1)*2]
             action_msg = DataConverter.numpy_to_ros(action_slice)
             self.agent_action_pubs[i].publish(action_msg)
-            self.get_logger().info(f'Published action to agent {i}: {action_slice.tolist()}')
+            if self.debug_logging:
+                self.get_logger().info(f'Published action to agent {i}: {action_slice.tolist()}', throttle_duration_sec=5.0)
 
     def publish_environment_state(self):
         try:
@@ -188,11 +278,13 @@ class ASVEnvNode(Node):
 
             # Basic agent states array (original data)
             agent_states_array = np.array(self.agent_states)
-            self.get_logger().info(f'Agent states for publishing: {[s.tolist() for s in self.agent_states]}')
+            if self.debug_logging:
+                self.get_logger().info(f'Agent states for publishing: {[s.tolist() for s in self.agent_states]}', throttle_duration_sec=5.0)
 
             # Calculate virtual leader position and path derivative
             pos_v, deriv = self.param_path.path(self.param_path.theta, True)
-            self.get_logger().info(f'Virtual leader position: {pos_v.tolist()}, derivative: {deriv}')
+            if self.debug_logging:
+                self.get_logger().info(f'Virtual leader position: {pos_v.tolist()}, derivative: {deriv}', throttle_duration_sec=5.0)
 
             # Calculate formation centroid from mean of agent positions
             centroid = np.mean(np.array([state[:2] for state in self.agent_states]), axis=0)
@@ -246,10 +338,11 @@ class ASVEnvNode(Node):
             state_msg = Float32MultiArray(data=global_state.tolist())
             self.state_pub.publish(state_msg)
 
-            self.get_logger().info(
-                f'Published extended environment state with {len(global_state)} elements',
-                throttle_duration_sec=5.0
-            )
+            if self.debug_logging:
+                self.get_logger().info(
+                    f'Published extended environment state with {len(global_state)} elements',
+                    throttle_duration_sec=5.0
+                )
         except Exception as e:
             self.get_logger().error(f'Error in publish_environment_state: {str(e)}')
 
@@ -268,6 +361,23 @@ class ASVEnvNode(Node):
 
         # Get position and derivative at this parameter
         pos_v, deriv = self.param_path.path(self.param_path.theta, True)
+        path_heading = float(deriv.item())
+        self.episode_step = 0
+        self.last_termination_reason = 'running'
+        self.done_pub.publish(Bool(data=False))
+        self.spin_counter = 0
+        self.spin_triggered = False
+        self._reference_positions = None
+        self._last_progress_scalar = None
+        self.agent_states = [None] * self.num_agents
+        self.received_updates_this_step = [False] * self.num_agents
+        reset_positions = []
+        self._cached_reward = None
+        self._last_reward_time = 0.0
+        self._cached_virtual_leader_pos = None
+        self._cached_virtual_leader_deriv = None
+        self._cached_expected_positions = None
+        self._cache_timestamp = 0.0
 
         # Reset all agents to initial positions
         for i in range(self.num_agents):
@@ -277,22 +387,25 @@ class ASVEnvNode(Node):
                 np.sin(deriv.item() + self.agent_betas[i])
             ])
 
-            # Add smaller random offset and ensure within bounds
-            offset = np.random.uniform(-5, 5, size=2)  # Smaller offset (was -10, 10)
+            for attempt in range(20):
+                offset = np.random.uniform(-self.reset_offset_range, self.reset_offset_range, size=2)
+                x_pos = np.clip(expected_pos[0] + offset[0], -5.0, 25.0)
+                y_pos = np.clip(expected_pos[1] + offset[1], -5.0, 25.0)
+                candidate = np.array([x_pos, y_pos], dtype=np.float32)
+                if all(np.linalg.norm(candidate - pos) >= self.min_reset_separation for pos in reset_positions):
+                    break
+            else:
+                self.get_logger().warn(
+                    f'Could not find well-separated reset pose for agent {i}; using last candidate.'
+                )
 
-            # Position before boundary check
-            x_pos = expected_pos[0] + offset[0]
-            y_pos = expected_pos[1] + offset[1]
-
-            # Ensure position is within bounds (origin-centered)
-            x_pos = np.clip(x_pos, -5.0, 25.0)  # Origin-centered bounds
-            y_pos = np.clip(y_pos, -5.0, 25.0)  # Origin-centered bounds
+            reset_positions.append(candidate)
 
             reset_state = np.array([
-                x_pos,   # x - clipped to bounds
-                y_pos,   # y - clipped to bounds
-                np.random.uniform(-np.pi, np.pi),  # yaw
-                0.0,                           # vx - START AT ZERO for stillness training
+                candidate[0],   # x - clipped to bounds
+                candidate[1],   # y - clipped to bounds
+                self._sample_reset_yaw(path_heading),  # yaw
+                0.0,                           # vx - start at zero
                 0.0,                           # vy
                 0.0                            # vyaw
             ])
@@ -301,8 +414,19 @@ class ASVEnvNode(Node):
             reset_msg = Float32MultiArray(data=reset_state.tolist())
             self.agent_reset_pubs[i].publish(reset_msg)
 
-        self.received_updates_this_step = [False] * self.num_agents
+        if reset_positions:
+            reset_positions_array = np.array(reset_positions, dtype=np.float32)
+            self._reference_positions = reset_positions_array.copy()
+            self._reference_update_time = self.get_clock().now().nanoseconds / 1e9
+            reset_centroid = np.mean(reset_positions_array, axis=0)
+            self._initial_progress_scalar = self._progress_scalar(reset_centroid)
+
         self.get_logger().info('Reset all agents to initial positions')
+
+    def _progress_scalar(self, position):
+        """Return scalar progress along the current straight path."""
+        projected = self.param_path.projection(np.asarray(position).reshape(2))
+        return float(np.mean(projected))
 
     def calculate_reward(self):
         # Only calculate if all agents have reported
@@ -314,9 +438,12 @@ class ASVEnvNode(Node):
         # Use cache if available and fresh (within 50ms for training efficiency)
         if (hasattr(self, '_last_reward_time') and
             current_time - self._last_reward_time < 0.05 and
-            hasattr(self, '_cached_reward')):
+            hasattr(self, '_cached_reward') and
+            self._cached_reward is not None):
             self.reward_pub.publish(Float32(data=float(self._cached_reward)))
             done = bool(self.check_done())
+            if self._last_debug_metrics:
+                self._last_debug_metrics["termination_reason"] = self.last_termination_reason
             self.done_pub.publish(Bool(data=done))
             return
 
@@ -347,81 +474,32 @@ class ASVEnvNode(Node):
         agent_positions = np.array([state[:2] for state in self.agent_states])
         agent_orientations = np.array([state[2] for state in self.agent_states])
         agent_velocities = np.array([[state[3], state[4], state[5]] for state in self.agent_states])
+        out_of_bounds_now = self._positions_out_of_bounds(agent_positions)
 
         # Calculate position errors
         position_errors = expected_positions - agent_positions
-        angles_to_target = np.arctan2(position_errors[:, 1], position_errors[:, 0]) - agent_orientations
+        raw_angles_to_target = np.arctan2(position_errors[:, 1], position_errors[:, 0]) - agent_orientations
+        angles_to_target = np.arctan2(np.sin(raw_angles_to_target), np.cos(raw_angles_to_target))
 
-        # === OLD REWARD (commented out - was rewarding formation following) ===
-        # # Velocity rewards (vectorized)
-        # k_v = 2.75
-        # rv_components = k_v * (agent_velocities[:, 0] * np.cos(angles_to_target) -
-        #                       (np.abs(agent_velocities[:, 1]) + np.abs(agent_velocities[:, 2])) *
-        #                       np.abs(np.sin(angles_to_target)))
-        #
-        # # Distance rewards (vectorized)
-        # k_d = 2.0
-        # err_max = 10.0
-        # errors = np.linalg.norm(position_errors, axis=1)
-        # rd_components = k_d * (-errors / err_max)
-        #
-        # # Average rewards
-        # total_rv = np.mean(rv_components)
-        # total_rd = np.mean(rd_components)
-        #
-        # # Final reward
-        # reward = total_rv + total_rd
-
-        # === NEW REWARD: Encourage staying still ===
-        
-        # 1. Stillness reward - reward low velocities (highest reward when completely still)
-        k_stillness = 5.0
-        # Calculate total velocity magnitude for each agent (vx^2 + vy^2 + vyaw^2)
-        velocity_magnitudes = np.sqrt(
-            agent_velocities[:, 0]**2 + 
-            agent_velocities[:, 1]**2 + 
-            agent_velocities[:, 2]**2
-        )
-        # Exponential reward: max reward at v=0, decays as velocity increases
-        stillness_components = k_stillness * np.exp(-velocity_magnitudes)
-        
-        # 2. Velocity penalty - directly penalize any movement
-        k_velocity_penalty = 3.0
-        # Linear penalty proportional to velocity magnitude
-        velocity_penalty_components = -k_velocity_penalty * velocity_magnitudes
-        
-        # 3. Position stability - track and reward staying near recent position
-        if not hasattr(self, '_reference_positions'):
-            # Initialize reference positions on first call
-            self._reference_positions = agent_positions.copy()
-            self._reference_update_time = current_time
-        
-        # Update reference positions slowly (every 2 seconds) to adapt to drift
-        if current_time - self._reference_update_time > 2.0:
-            # Slowly move reference toward current position (90% old, 10% new)
-            self._reference_positions = 0.9 * self._reference_positions + 0.1 * agent_positions
-            self._reference_update_time = current_time
-        
-        # Penalize drift from reference position
-        k_drift = 2.0
-        drift_distances = np.linalg.norm(agent_positions - self._reference_positions, axis=1)
-        drift_penalty_components = -k_drift * drift_distances
-        
-        # Average all components across agents
-        avg_stillness = np.mean(stillness_components)
-        avg_velocity_penalty = np.mean(velocity_penalty_components)
-        avg_drift_penalty = np.mean(drift_penalty_components)
-        
-        # Final reward: encourage stillness, penalize movement and drift
-        reward = avg_stillness + avg_velocity_penalty + avg_drift_penalty
-
-        # --- Debug metrics ---
         centroid = np.mean(agent_positions, axis=0)
         cross_track_error = self.param_path.cross_track_error(centroid)
         along_track_error = self.param_path.along_track_error(centroid)
-        formation_error = float(np.mean(np.linalg.norm(position_errors, axis=1)))
-        heading_error = float(np.mean(np.abs(np.arctan2(position_errors[:, 1], position_errors[:, 0]) - agent_orientations)))
+        progress_scalar = self._progress_scalar(centroid)
+        progress_delta = 0.0 if self._last_progress_scalar is None else progress_scalar - self._last_progress_scalar
+        self._last_progress_scalar = progress_scalar
 
+        path_heading = float(deriv.item())
+        path_tangent = np.array([np.cos(path_heading), np.sin(path_heading)])
+        path_normal = np.array([-path_tangent[1], path_tangent[0]])
+        centroid_velocity = np.mean(agent_velocities[:, :2], axis=0)
+        path_speed = float(np.dot(centroid_velocity, path_tangent))
+        lateral_speed = float(abs(np.dot(centroid_velocity, path_normal)))
+
+        velocity_magnitudes = np.sqrt(
+            agent_velocities[:, 0]**2 +
+            agent_velocities[:, 1]**2 +
+            agent_velocities[:, 2]**2
+        )
         mean_yaw_rate = float(np.mean(agent_velocities[:, 2]))
         mean_abs_yaw_rate = float(np.mean(np.abs(agent_velocities[:, 2])))
         mean_speed = float(np.mean(np.sqrt(agent_velocities[:, 0]**2 + agent_velocities[:, 1]**2)))
@@ -435,20 +513,116 @@ class ASVEnvNode(Node):
         if self.spin_counter >= self.spin_window:
             self.spin_triggered = True
 
+        avg_stillness = 0.0
+        avg_velocity_penalty = 0.0
+        avg_drift_penalty = 0.0
+        mean_stillness_drift = 0.0
+        formation_penalty = 0.0
+        formation_bonus = 0.0
+
+        if self.reward_mode == 'stillness':
+            k_stillness = 5.0
+            stillness_components = k_stillness * np.exp(-velocity_magnitudes)
+
+            k_velocity_penalty = 3.0
+            velocity_penalty_components = -k_velocity_penalty * velocity_magnitudes
+
+            if self._reference_positions is None:
+                self._reference_positions = agent_positions.copy()
+                self._reference_update_time = current_time
+
+            k_drift = 2.0
+            drift_distances = np.linalg.norm(agent_positions - self._reference_positions, axis=1)
+            mean_stillness_drift = float(np.mean(drift_distances))
+            drift_penalty_components = -k_drift * drift_distances
+
+            avg_stillness = float(np.mean(stillness_components))
+            avg_velocity_penalty = float(np.mean(velocity_penalty_components))
+            avg_drift_penalty = float(np.mean(drift_penalty_components))
+            reward = avg_stillness + avg_velocity_penalty + avg_drift_penalty
+        else:
+            formation_errors = np.linalg.norm(position_errors, axis=1)
+            mean_formation_error = float(np.mean(formation_errors))
+            forward_alignment = np.cos(angles_to_target)
+            heading_to_path = np.arctan2(
+                np.sin(agent_orientations - path_heading),
+                np.cos(agent_orientations - path_heading)
+            )
+            path_heading_alignment = np.cos(heading_to_path)
+
+            forward_progress_reward = 20.0 * float(np.clip(progress_delta, -0.5, 0.5))
+            path_speed_reward = 6.0 * max(path_speed, 0.0)
+            backward_penalty = -8.0 * max(-path_speed, 0.0)
+            low_speed_ratio = np.clip(
+                (self.path_target_speed - path_speed) / self.path_target_speed,
+                0.0,
+                1.5
+            )
+            low_speed_penalty = -self.path_low_speed_penalty_scale * float(low_speed_ratio)
+            formation_penalty = -self.formation_penalty_scale * mean_formation_error
+            formation_bonus = self.formation_bonus_scale * float(
+                np.exp(-mean_formation_error / self.formation_bonus_width)
+            )
+            cross_track_penalty = -0.55 * float(cross_track_error)
+            target_heading_reward = 0.4 * float(np.mean(forward_alignment))
+            path_heading_reward = 0.6 * float(np.mean(path_heading_alignment))
+            lateral_penalty = -0.8 * lateral_speed
+            yaw_penalty = -1.5 * mean_abs_yaw_rate
+            spin_penalty = -6.0 if self.spin_triggered else 0.0
+            boundary_penalty = -25.0 if out_of_bounds_now else 0.0
+
+            reward = (
+                forward_progress_reward
+                + path_speed_reward
+                + backward_penalty
+                + low_speed_penalty
+                + formation_penalty
+                + formation_bonus
+                + cross_track_penalty
+                + target_heading_reward
+                + path_heading_reward
+                + lateral_penalty
+                + yaw_penalty
+                + spin_penalty
+                + boundary_penalty
+            )
+
+        self.episode_step += 1
+
+        # Reset reference positions if the mode was switched dynamically.
+        if self.reward_mode != 'stillness':
+            self._reference_positions = agent_positions.copy()
+
+        # --- Debug metrics ---
+        formation_error = float(np.mean(np.linalg.norm(position_errors, axis=1)))
+        heading_error = float(np.mean(np.abs(angles_to_target)))
+
         self._last_debug_metrics = {
             "reward": float(reward),
             "avg_stillness": float(avg_stillness),
             "avg_velocity_penalty": float(avg_velocity_penalty),
             "avg_drift_penalty": float(avg_drift_penalty),
+            "mean_stillness_drift": float(mean_stillness_drift),
             "cross_track_error": float(cross_track_error),
             "along_track_error": float(along_track_error),
             "formation_error": formation_error,
             "heading_error": heading_error,
+            "progress_scalar": float(progress_scalar),
+            "progress_delta": float(progress_delta),
+            "path_speed": path_speed,
+            "low_speed_penalty": float(low_speed_penalty) if self.reward_mode != 'stillness' else 0.0,
+            "formation_penalty": float(formation_penalty) if self.reward_mode != 'stillness' else 0.0,
+            "formation_bonus": float(formation_bonus) if self.reward_mode != 'stillness' else 0.0,
+            "lateral_speed": lateral_speed,
             "mean_speed": mean_speed,
             "mean_yaw_rate": mean_yaw_rate,
             "mean_abs_yaw_rate": mean_abs_yaw_rate,
+            "out_of_bounds": out_of_bounds_now,
             "spin_counter": self.spin_counter,
-            "spin_triggered": self.spin_triggered
+            "spin_triggered": self.spin_triggered,
+            "episode_step": self.episode_step,
+            "termination_reason": self.last_termination_reason,
+            "reward_mode": self.reward_mode
         }
 
         # Cache the reward
@@ -460,23 +634,49 @@ class ASVEnvNode(Node):
 
         # Check if done and publish - use explicit bool conversion
         done = bool(self.check_done())
+        self._last_debug_metrics["termination_reason"] = self.last_termination_reason
         self.done_pub.publish(Bool(data=done))
 
     def check_done(self):
-        # Episode is done if:
-        # 1. There's a collision between agents
-        # 2. Formation has reached a successful state
+        self.last_termination_reason = 'running'
 
-        # Check for collisions
-        if self.check_collision():
+        if self.check_out_of_bounds():
+            self.last_termination_reason = 'out_of_bounds'
             return True
 
-        # Check for successful formation
-        centroid = np.mean(np.array([state[:2] for state in self.agent_states]), axis=0)
-        along_track_error = self.param_path.along_track_error(centroid)
+        if self.check_collision():
+            self.last_termination_reason = 'collision'
+            return True
 
-        # Success if along track error is small (adjusted for scaled coordinates)
-        return along_track_error < 2.0  # Smaller threshold for scaled system
+        if self.episode_step >= self.max_episode_steps:
+            self.last_termination_reason = 'max_episode_steps'
+            return True
+
+        centroid = np.mean(np.array([state[:2] for state in self.agent_states]), axis=0)
+        progress_from_start = 0.0
+        if self._initial_progress_scalar is not None:
+            progress_from_start = self._progress_scalar(centroid) - self._initial_progress_scalar
+
+        if self.reward_mode != 'stillness' and progress_from_start >= self.goal_progress_delta:
+            self.last_termination_reason = 'goal_progress'
+            return True
+
+        return False
+
+    def _positions_out_of_bounds(self, positions):
+        min_x, max_x = -15.0, 35.0
+        min_y, max_y = -15.0, 35.0
+        for x_pos, y_pos in positions:
+            if x_pos < min_x or x_pos > max_x or y_pos < min_y or y_pos > max_y:
+                return True
+        return False
+
+    def check_out_of_bounds(self):
+        if any(s is None for s in self.agent_states):
+            return False
+
+        positions = np.array([state[:2] for state in self.agent_states])
+        return self._positions_out_of_bounds(positions)
 
     def check_collision(self):
         if self.num_agents < 2:
@@ -496,13 +696,19 @@ class ASVEnvNode(Node):
         return False
 
     def _force_first_publish(self):
-        self.get_logger().info(f'AGENT STATES: {[s is not None for s in self.agent_states]}')
+        if self.debug_logging:
+            self.get_logger().info(f'AGENT STATES: {[s is not None for s in self.agent_states]}')
         if all(s is not None for s in self.agent_states):
-            self.get_logger().info('First state publish forced to break action-state deadlock')
+            if self.debug_logging:
+                self.get_logger().info('First state publish forced to break action-state deadlock')
             self.publish_environment_state()
+            if self._first_publish_timer is not None:
+                self._first_publish_timer.cancel()
+                self._first_publish_timer = None
             return True
         else:
-            self.get_logger().info('Waiting for all agents to report before forcing first state')
+            if self.debug_logging:
+                self.get_logger().info('Waiting for all agents to report before forcing first state')
             return False
 
     def reset_callback(self, request, response):
@@ -687,21 +893,42 @@ class ASVEnvNode(Node):
 
         m = self._last_debug_metrics
         summary = (
+            f"mode={m.get('reward_mode')} | step={m.get('episode_step')} | "
             f"reward={m.get('reward'):.3f} | cte={m.get('cross_track_error'):.3f} | "
             f"along_err={m.get('along_track_error'):.3f} | form_err={m.get('formation_error'):.3f} | "
+            f"progress={m.get('progress_scalar'):.3f} d={m.get('progress_delta'):.3f} | "
+            f"path_speed={m.get('path_speed'):.3f} | low_speed_pen={m.get('low_speed_penalty'):.3f} | "
+            f"form_pen={m.get('formation_penalty'):.3f} | form_bonus={m.get('formation_bonus'):.3f} | "
+            f"lateral={m.get('lateral_speed'):.3f} | "
             f"heading_err={m.get('heading_error'):.3f} | speed={m.get('mean_speed'):.3f} | "
             f"yaw_rate={m.get('mean_yaw_rate'):.3f} | spin_cnt={m.get('spin_counter')} | "
-            f"spin_triggered={m.get('spin_triggered')}"
+            f"spin_triggered={m.get('spin_triggered')} | oob={m.get('out_of_bounds')} | "
+            f"done={m.get('termination_reason')}"
         )
+        if m.get('reward_mode') == 'stillness':
+            summary += (
+                f" | still={m.get('avg_stillness'):.3f}"
+                f" | vel_pen={m.get('avg_velocity_penalty'):.3f}"
+                f" | drift={m.get('mean_stillness_drift'):.3f}"
+                f" | drift_pen={m.get('avg_drift_penalty'):.3f}"
+            )
         self.get_logger().info(f"[env_debug] {summary}")
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = ASVEnvNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            node.destroy_node()
+        except KeyboardInterrupt:
+            pass
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

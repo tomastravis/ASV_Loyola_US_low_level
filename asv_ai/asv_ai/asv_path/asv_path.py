@@ -25,17 +25,17 @@ class ParametrizedPath:
         match self.path_no:
             case 0: # Trayectoria lineal diagonal
                 if deriv: # Si es true devuelve la derivada de la trayectoria, en caso contrario solo las coordenadas
-                    return np.array([[scaled_theta], [scaled_theta]]), np.array([0.3])  # scaled derivative
+                    return np.array([[scaled_theta], [scaled_theta]]), np.array([np.pi / 4])  # path heading
                 else:
                     return np.array([[scaled_theta], [scaled_theta]])
             case 1: # Trayectoria lineal con pendiente 0.5
                 if deriv:
-                    return np.array([[scaled_theta], [0.5*scaled_theta]]), np.array([0.15])  # scaled derivative
+                    return np.array([[scaled_theta], [0.5*scaled_theta]]), np.array([np.arctan2(0.5, 1.0)])  # path heading
                 else:
                     return np.array([[scaled_theta], [0.5*scaled_theta]])
             case _: # Trayectoria lineal diagonal igual que el caso 0
                 if deriv:
-                    return np.array([[scaled_theta], [scaled_theta]]), np.array([0.3])  # scaled derivative
+                    return np.array([[scaled_theta], [scaled_theta]]), np.array([np.pi / 4])  # path heading
                 else:
                     return np.array([[scaled_theta], [scaled_theta]])
 

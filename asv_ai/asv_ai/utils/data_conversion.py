@@ -71,7 +71,7 @@ class DataConverter:
         elif action_type == "yaw_moment":
             return action_normalized * 0.5 * 2.3  # Scale to [-1.15, 1.15] N⋅m for ASV model
         elif action_type == "surge_force":
-            return action_normalized * 2.0  # Scale to [0, 2] N for ASV model (after +1 offset)
+            return action_normalized  # Centered surge force: 0 means no thrust
         return action_normalized
 
     @staticmethod
@@ -84,7 +84,7 @@ class DataConverter:
         elif action_type == "yaw_moment":
             return action_physical / (0.5 * 2.3)  # Reverse scaling for ASV model
         elif action_type == "surge_force":
-            return (action_physical - 1.0) / 2.0  # Reverse scaling for ASV model (remove +1 offset)
+            return action_physical  # Centered surge force: 0 means no thrust
         return action_physical
 
     @staticmethod

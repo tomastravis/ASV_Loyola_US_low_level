@@ -6,6 +6,8 @@ This module provides the CustomPPO class that implements the Proximal Policy
 Optimization algorithm with compatibility for the stable-baselines3 interface.
 """
 
+import os
+
 import numpy as np
 import torch
 from gymnasium import spaces
@@ -21,7 +23,8 @@ class CustomPPO:
     """
     
     def __init__(self, obs_dim, action_dim, device='cpu', learning_rate=3e-4, 
-                 clip_range=0.2, ent_coef=0.0, vf_coef=0.5, max_grad_norm=0.5, target_kl=None):
+                 clip_range=0.2, ent_coef=0.0, vf_coef=0.1, max_grad_norm=0.5,
+                 target_kl=None, initial_log_std=-1.5, initial_surge_action_bias=0.0):
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.device = device
@@ -30,9 +33,16 @@ class CustomPPO:
         self.vf_coef = vf_coef
         self.max_grad_norm = max_grad_norm
         self.target_kl = target_kl
-        
+        self.initial_log_std = initial_log_std
+        self.initial_surge_action_bias = initial_surge_action_bias
+
         # Create policy network
-        self.policy = CustomActorCritic(obs_dim, action_dim).to(device)
+        self.policy = CustomActorCritic(
+            obs_dim,
+            action_dim,
+            initial_log_std=initial_log_std,
+            initial_surge_action_bias=initial_surge_action_bias
+        ).to(device)
         
         # Create optimizer
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=learning_rate)
@@ -92,11 +102,8 @@ class CustomPPO:
         Args:
             path: File path to save the model (should end with .zip for compatibility)
         """
-        # Convert .zip to .pth for torch save format
-        if path.endswith('.zip'):
-            torch_path = path.replace('.zip', '.pth')
-        else:
-            torch_path = path
+        torch_path = os.path.expanduser(path)
+        os.makedirs(os.path.dirname(torch_path) or '.', exist_ok=True)
             
         save_dict = {
             'policy_state_dict': self.policy.state_dict(),
@@ -108,6 +115,9 @@ class CustomPPO:
             'ent_coef': self.ent_coef,
             'vf_coef': self.vf_coef,
             'max_grad_norm': self.max_grad_norm,
+            'target_kl': self.target_kl,
+            'initial_log_std': self.initial_log_std,
+            'initial_surge_action_bias': self.initial_surge_action_bias,
             '_n_updates': self._n_updates
         }
         
@@ -127,11 +137,11 @@ class CustomPPO:
         Returns:
             CustomPPO instance with loaded parameters
         """
-        # Convert .zip to .pth for torch load format
-        if path.endswith('.zip'):
-            torch_path = path.replace('.zip', '.pth')
-        else:
-            torch_path = path
+        torch_path = os.path.expanduser(path)
+        if not os.path.exists(torch_path) and torch_path.endswith('.zip'):
+            legacy_path = torch_path[:-4] + '.pth'
+            if os.path.exists(legacy_path):
+                torch_path = legacy_path
             
         checkpoint = torch.load(torch_path, map_location=device)
         
@@ -150,8 +160,11 @@ class CustomPPO:
             learning_rate=checkpoint.get('learning_rate', 3e-4),
             clip_range=checkpoint.get('clip_range', 0.2),
             ent_coef=checkpoint.get('ent_coef', 0.0),
-            vf_coef=checkpoint.get('vf_coef', 0.5),
-            max_grad_norm=checkpoint.get('max_grad_norm', 0.5)
+            vf_coef=checkpoint.get('vf_coef', 0.1),
+            max_grad_norm=checkpoint.get('max_grad_norm', 0.5),
+            target_kl=checkpoint.get('target_kl', None),
+            initial_log_std=checkpoint.get('initial_log_std', -1.5),
+            initial_surge_action_bias=checkpoint.get('initial_surge_action_bias', 0.0)
         )
         
         # Load state dicts
